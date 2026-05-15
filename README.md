@@ -1,25 +1,163 @@
 # Subs
 
-Subs is a local-first macOS prototype for realtime meeting subtitles and translation.
+Subs is a local-first macOS prototype for realtime meeting subtitles and
+translation. It is designed for people who want meeting help without sending
+meeting audio, transcripts, or translations to a cloud API.
 
-The current build contains:
+The current product focus is:
 
-- local macOS system-audio capture through ScreenCaptureKit
-- real on-device Thai/Japanese speech-to-text through Apple's Speech framework
-- on-device Thai/Japanese to English translation through Apple's Translation framework
-- local bilingual transcript memory
-- no network SDKs or cloud calls
+- Thai to English subtitles
+- Japanese to English subtitles
+- local Teams/system-audio capture
+- a menu bar control surface
+- a floating subtitle window
+- a local bilingual transcript window
 
-## Local-only guarantees
+## What the app does
 
-Speech recognition is configured with `requiresOnDeviceRecognition = true`.
-Translation uses Apple's `TranslationSession`, which processes translation on the device.
-The app has no cloud API clients.
+Subs sits in the macOS menu bar. During a meeting, the user starts local capture
+from the menu bar. The app captures system audio from the Mac, turns speech into
+text on device, translates that text to English on device, and shows the result
+in a lightweight subtitle overlay.
 
-## Run
+The user can also open a larger transcript window to review the bilingual
+transcript lines.
+
+## How it works
+
+The core pipeline is:
+
+```text
+Teams/system audio
+  -> ScreenCaptureKit local audio capture
+  -> Apple Speech on-device speech recognition
+  -> Apple Translation on-device translation
+  -> live subtitle overlay
+  -> local transcript memory
+```
+
+No OpenAI API, cloud transcription API, cloud translation API, or network SDK is
+used in the app.
+
+## Local-only design
+
+The local privacy story is enforced in code:
+
+- Audio capture uses Apple's `ScreenCaptureKit`.
+- Speech recognition uses Apple's `Speech` framework.
+- Speech recognition is configured with `requiresOnDeviceRecognition = true`.
+- Translation uses Apple's `TranslationSession`.
+- The app does not include any cloud API client.
+- Transcript memory is currently in app memory only.
+
+If on-device speech recognition is unavailable for a selected language, the app
+shows an error instead of silently falling back to cloud recognition.
+
+## App surfaces
+
+Subs has three main surfaces:
+
+- **Menu bar app**: start/stop capture, choose source language, open subtitles,
+  open transcript, open settings, quit.
+- **Subtitle overlay**: lightweight window for live source text and English
+  translation during a call.
+- **Transcript window**: larger view that shows bilingual transcript lines with
+  timestamps.
+
+The menu bar is the daily control surface. The windows are there when the user
+needs more space.
+
+## Source tour
+
+The app is a SwiftPM macOS app.
+
+- `Package.swift`: Swift package definition and macOS deployment target.
+- `Sources/SubsApp/App/SubsApp.swift`: app entry point, window scenes, menu bar
+  scene, settings scene.
+- `Sources/SubsApp/Stores/MeetingSessionStore.swift`: central session state and
+  orchestration for capture, speech, translation, and transcript memory.
+- `Sources/SubsApp/Services/SystemAudioCaptureService.swift`: local system-audio
+  capture using `ScreenCaptureKit`.
+- `Sources/SubsApp/Services/LocalSpeechRecognitionService.swift`: on-device
+  speech recognition using `SFSpeechRecognizer`.
+- `Sources/SubsApp/Models/TranscriptModels.swift`: transcript and translation
+  data models.
+- `Sources/SubsApp/Views/MenuBarControlsView.swift`: menu bar controls.
+- `Sources/SubsApp/Views/SubtitleOverlayView.swift`: floating live subtitle UI.
+- `Sources/SubsApp/Views/LiveSubtitlesView.swift`: main live subtitle panel and
+  Apple Translation task host.
+- `Sources/SubsApp/Views/TranscriptMemoryView.swift`: bilingual transcript list.
+- `Sources/SubsApp/Views/SidebarView.swift`: session status and language
+  controls in the main window.
+- `Sources/SubsApp/Views/SettingsView.swift`: privacy/runtime settings display.
+- `script/build_and_run.sh`: builds, stages, and launches the macOS app bundle.
+- `.codex/environments/environment.toml`: gives Codex a Run action.
+
+## Current language support
+
+The UI is intentionally narrowed to:
+
+- Thai -> English
+- Japanese -> English
+
+Speech locales:
+
+- Thai: `th-TH`
+- Japanese: `ja-JP`
+
+Translation locales:
+
+- Thai: `th`
+- Japanese: `ja`
+- English: `en`
+
+## Important limitations
+
+This is still a prototype.
+
+- Translation through Apple's Translation framework requires macOS 15 or later.
+- The app still builds and runs on macOS 14, but translation is only enabled on
+  macOS 15+.
+- Availability of on-device speech recognition depends on macOS language support
+  and installed language assets.
+- Transcript memory is in memory only and is not persisted to disk yet.
+- The subtitle overlay is a normal utility window today. It is not yet a
+  polished always-on-top, click-through caption bar.
+- Speaker diarization is not implemented yet, so all speech is labeled as
+  meeting audio.
+
+## Run locally
+
+Build and launch:
 
 ```sh
 ./script/build_and_run.sh
 ```
 
-On first capture, macOS may ask for Screen & System Audio Recording permission.
+Verify that the app launches:
+
+```sh
+./script/build_and_run.sh --verify
+```
+
+On first capture, macOS may ask for Screen & System Audio Recording permission
+and Speech Recognition permission.
+
+## How to explain it
+
+A simple way to describe the product:
+
+> Subs is a macOS menu bar app that listens to meeting audio locally, transcribes
+> Thai or Japanese speech on the Mac, translates it to English on the Mac, and
+> shows live subtitles without sending meeting data to a cloud service.
+
+The key technical idea:
+
+> Instead of joining Teams as a bot, Subs captures the audio already playing on
+> the user's Mac. That makes it lightweight and app-agnostic, while keeping the
+> processing local.
+
+The key privacy idea:
+
+> The app chooses local-only Apple frameworks and refuses cloud fallback for
+> speech recognition.
