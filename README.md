@@ -13,6 +13,29 @@ The current product focus is:
 - a floating subtitle window
 - a local bilingual transcript window
 
+## Current backend status
+
+The current code uses Apple's built-in local frameworks first:
+
+- Apple Speech for on-device speech recognition
+- Apple Translation for on-device translation
+
+This is useful for proving the local-first app architecture, but it has two
+important product constraints:
+
+- Thai speech recognition is not supported by the current Apple Speech backend
+  on the test Mac.
+- Apple Translation requires macOS 15 or later.
+
+For production Thai/Japanese support across more Macs, the next backend should
+be a bundled local model stack:
+
+- WhisperKit, whisper.cpp, or another local Whisper-style ASR runtime for
+  Thai/Japanese speech-to-text
+- a bundled local translation model for Thai/Japanese to English
+
+The app intentionally does not fall back to cloud recognition or translation.
+
 ## What the app does
 
 Subs sits in the macOS menu bar. During a meeting, the user starts local capture
@@ -115,6 +138,8 @@ Translation locales:
 
 This is still a prototype.
 
+- Thai ASR currently requires replacing the Apple Speech backend with a local
+  Whisper-style ASR model.
 - Translation through Apple's Translation framework requires macOS 15 or later.
 - The app still builds and runs on macOS 14, but translation is only enabled on
   macOS 15+.

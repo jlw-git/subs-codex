@@ -15,6 +15,11 @@ final class LocalSpeechRecognitionService: ObservableObject {
         stop()
         state = .requestingPermission
 
+        guard language != "Thai" else {
+            state = .failed("Thai is not supported by the current Apple Speech backend on this Mac. To keep Thai fully local, Subs needs a local Whisper-style ASR model backend next. No cloud fallback was used.")
+            return
+        }
+
         let authorizationStatus = await requestAuthorization()
         guard authorizationStatus == .authorized else {
             state = .failed("Speech Recognition permission is required for local transcription.")
@@ -28,7 +33,7 @@ final class LocalSpeechRecognitionService: ObservableObject {
         }
 
         guard recognizer.supportsOnDeviceRecognition else {
-            state = .failed("On-device speech recognition is not installed or supported for \(language). Choose another language or install the language in macOS settings.")
+            state = .failed("On-device speech recognition is not installed or supported for \(language) in the current Apple Speech backend. Subs did not fall back to cloud recognition.")
             return
         }
 

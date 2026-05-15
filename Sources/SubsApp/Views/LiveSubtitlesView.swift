@@ -50,7 +50,7 @@ struct LiveSubtitlesView: View {
             }
 
             if #unavailable(macOS 15.0) {
-                Text("On-device translation requires macOS 15 or later. Local speech-to-text still runs on this Mac.")
+                Text("Apple on-device translation requires macOS 15 or later. This Mac can still run local capture and supported local speech-to-text, but Thai/Japanese to English translation needs macOS 15 or a bundled local translation model.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .padding()
