@@ -2,8 +2,8 @@ import Foundation
 
 @MainActor
 final class MeetingSessionStore: ObservableObject {
-    @Published var sourceLanguage = "English"
-    @Published var targetLanguage = "Spanish"
+    @Published var sourceLanguage = "Thai"
+    @Published var targetLanguage = "English"
     @Published private(set) var segments: [TranscriptSegment] = []
     @Published private(set) var currentSourceSubtitle = "Waiting for local audio..."
     @Published private(set) var currentTranslatedSubtitle = ""
@@ -96,9 +96,8 @@ final class MeetingSessionStore: ObservableObject {
 
     private static func localeLanguage(for language: String) -> Locale.Language {
         switch language {
-        case "Spanish": Locale.Language(identifier: "es")
         case "Japanese": Locale.Language(identifier: "ja")
-        case "Mandarin": Locale.Language(identifier: "zh-Hans")
+        case "Thai": Locale.Language(identifier: "th")
         default: Locale.Language(identifier: "en")
         }
     }

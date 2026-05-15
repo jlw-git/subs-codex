@@ -82,9 +82,8 @@ final class LocalSpeechRecognitionService: ObservableObject {
 
     static func localeIdentifier(for language: String) -> String {
         switch language {
-        case "Spanish": "es-ES"
         case "Japanese": "ja-JP"
-        case "Mandarin": "zh-CN"
+        case "Thai": "th-TH"
         default: "en-US"
         }
     }

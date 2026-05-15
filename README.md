@@ -5,8 +5,8 @@ Subs is a local-first macOS prototype for realtime meeting subtitles and transla
 The current build contains:
 
 - local macOS system-audio capture through ScreenCaptureKit
-- real on-device speech-to-text through Apple's Speech framework
-- on-device translation through Apple's Translation framework
+- real on-device Thai/Japanese speech-to-text through Apple's Speech framework
+- on-device Thai/Japanese to English translation through Apple's Translation framework
 - local bilingual transcript memory
 - no network SDKs or cloud calls
 

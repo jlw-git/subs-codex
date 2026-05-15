@@ -36,17 +36,12 @@ struct MenuBarControlsView: View {
             Divider()
 
             Picker("Source", selection: $store.sourceLanguage) {
-                Text("English").tag("English")
-                Text("Spanish").tag("Spanish")
+                Text("Thai").tag("Thai")
                 Text("Japanese").tag("Japanese")
-                Text("Mandarin").tag("Mandarin")
             }
 
             Picker("Target", selection: $store.targetLanguage) {
-                Text("Spanish").tag("Spanish")
                 Text("English").tag("English")
-                Text("Japanese").tag("Japanese")
-                Text("Mandarin").tag("Mandarin")
             }
 
             Divider()
