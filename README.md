@@ -76,6 +76,10 @@ The local privacy story is enforced in code:
 If on-device speech recognition is unavailable for a selected language, the app
 shows an error instead of silently falling back to cloud recognition.
 
+The full local-only architecture policy lives in
+`docs/LOCAL_ONLY_ARCHITECTURE.md`. Any future ASR, translation, summary, memory,
+or diagnostics backend must follow that policy.
+
 ## App surfaces
 
 Subs has three main surfaces:
@@ -115,6 +119,8 @@ The app is a SwiftPM macOS app.
 - `Sources/SubsApp/Views/SettingsView.swift`: privacy/runtime settings display.
 - `script/build_and_run.sh`: builds, stages, and launches the macOS app bundle.
 - `.codex/environments/environment.toml`: gives Codex a Run action.
+- `docs/LOCAL_ONLY_ARCHITECTURE.md`: non-negotiable no-cloud architecture
+  policy for future backend changes.
 
 ## Current language support
 

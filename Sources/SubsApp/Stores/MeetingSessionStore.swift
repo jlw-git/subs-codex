@@ -12,6 +12,12 @@ final class MeetingSessionStore: ObservableObject {
     let capture = SystemAudioCaptureService()
     let speech = LocalSpeechRecognitionService()
     private var lastFinalTranscript = ""
+    private let translationBackendDeclaration = LocalOnlyBackendDeclaration(
+        name: "Apple Translation on-device session",
+        purpose: "translation",
+        location: .onDevice,
+        allowsCloudFallback: false
+    )
 
     var isRunning: Bool {
         capture.state == .running
@@ -59,6 +65,10 @@ final class MeetingSessionStore: ObservableObject {
         if job.isFinal {
             appendFinalSegment(sourceText: job.sourceText, translatedText: translatedText)
         }
+    }
+
+    func canUseTranslationBackend() throws {
+        try LocalOnlyPolicy.validate(translationBackendDeclaration)
     }
 
     func translationFailed(_ error: Error, for job: TranslationJob) {

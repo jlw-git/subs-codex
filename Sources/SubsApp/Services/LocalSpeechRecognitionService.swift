@@ -7,6 +7,13 @@ final class LocalSpeechRecognitionService: ObservableObject {
     @Published private(set) var state: CaptureState = .idle
     @Published private(set) var latestTranscript = "Waiting for local audio..."
 
+    private let backendDeclaration = LocalOnlyBackendDeclaration(
+        name: "Apple Speech on-device recognition",
+        purpose: "speech-to-text",
+        location: .onDevice,
+        allowsCloudFallback: false
+    )
+
     private var recognizer: SFSpeechRecognizer?
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
@@ -14,6 +21,13 @@ final class LocalSpeechRecognitionService: ObservableObject {
     func start(language: String, onRecognition: @escaping (String, Bool) -> Void) async {
         stop()
         state = .requestingPermission
+
+        do {
+            try LocalOnlyPolicy.validate(backendDeclaration)
+        } catch {
+            state = .failed(error.localizedDescription)
+            return
+        }
 
         guard language != "Thai" else {
             state = .failed("Thai is not supported by the current Apple Speech backend on this Mac. To keep Thai fully local, Subs needs a local Whisper-style ASR model backend next. No cloud fallback was used.")

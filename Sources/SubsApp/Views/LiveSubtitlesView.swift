@@ -95,6 +95,7 @@ private struct TranslationTaskHost: View {
                 guard let job = store.pendingTranslation else { return }
 
                 do {
+                    try store.canUseTranslationBackend()
                     let response = try await session.translate(job.sourceText)
                     store.applyTranslation(response.targetText, for: job)
                 } catch {
