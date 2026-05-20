@@ -20,8 +20,8 @@ The current code is moving toward a fully bundled local model stack:
 - **ASR / speech-to-text**: Local WhisperKit backend is wired and a local model
   has been installed on the development machine at
   `~/Library/Application Support/Subs/Models/whisperkit`.
-- **Translation**: still needs a local translation backend for macOS 14. Apple
-  Translation remains available only on macOS 15+.
+- **Translation**: local OPUS-MT runtime for Thai/Japanese -> English. It uses
+  local model files only and does not use Apple Translation.
 
 The current ASR choices are:
 
@@ -29,9 +29,10 @@ The current ASR choices are:
 - `Apple Speech`: diagnostic/local fallback for languages and Macs where
   Apple's `supportsOnDeviceRecognition` is available.
 
-The next major backend is local translation:
+The first local translation backend is deliberately narrow:
 
-- OPUS-MT Thai -> English and Japanese -> English are good first candidates.
+- OPUS-MT Thai -> English and Japanese -> English are the first local
+  translation backends.
 - NLLB-200 is a stronger multilingual candidate, but integration is heavier.
 
 The app intentionally does not fall back to cloud recognition or translation.
@@ -54,7 +55,7 @@ The core pipeline is:
 Teams/system audio
   -> ScreenCaptureKit local audio capture
   -> Local WhisperKit ASR
-  -> local translation backend (next)
+  -> local OPUS-MT translation backend
   -> live subtitle overlay
   -> local transcript memory
 ```
@@ -71,7 +72,8 @@ The local privacy story is enforced in code:
 - WhisperKit is configured with `download: false` at runtime.
 - Apple Speech, when selected, is configured with
   `requiresOnDeviceRecognition = true`.
-- Apple Translation, when available on macOS 15+, uses `TranslationSession`.
+- Local translation uses the bundled OPUS-MT runner script with locally
+  installed model folders.
 - The app does not include any cloud API client.
 - Transcript memory is currently in app memory only.
 
@@ -116,8 +118,7 @@ The app is a SwiftPM macOS app.
   data models.
 - `Sources/SubsApp/Views/MenuBarControlsView.swift`: menu bar controls.
 - `Sources/SubsApp/Views/SubtitleOverlayView.swift`: floating live subtitle UI.
-- `Sources/SubsApp/Views/LiveSubtitlesView.swift`: main live subtitle panel and
-  translation task host.
+- `Sources/SubsApp/Views/LiveSubtitlesView.swift`: main live subtitle panel.
 - `Sources/SubsApp/Views/TranscriptMemoryView.swift`: bilingual transcript list.
 - `Sources/SubsApp/Views/SidebarView.swift`: session status and language
   controls in the main window.
@@ -129,7 +130,7 @@ The app is a SwiftPM macOS app.
 - `docs/LOCAL_WHISPER_MODEL_SETUP.md`: where local WhisperKit model files must
   be installed for the `Local Whisper` backend.
 - `docs/LOCAL_TRANSLATION_MODEL_OPTIONS.md`: local translation model options for
-  Thai/Japanese -> English on macOS 14.
+  Thai/Japanese -> English and why OPUS-MT is the first backend.
 
 ## Current language support
 
@@ -155,10 +156,8 @@ This is still a prototype.
 
 - Thai/Japanese ASR uses Local Whisper, but the current installed model is a
   small development model. Production quality needs model evaluation.
-- Local Thai/Japanese -> English translation is not implemented yet.
-- Translation through Apple's Translation framework requires macOS 15 or later.
-- The app still builds and runs on macOS 14, but Apple Translation is only
-  enabled on macOS 15+.
+- Local Thai/Japanese -> English translation requires local OPUS-MT model
+  folders and a local Python environment with `transformers` installed.
 - Transcript memory is in memory only and is not persisted to disk yet.
 - The subtitle overlay is a normal utility window today. It is not yet a
   polished always-on-top, click-through caption bar.
@@ -179,6 +178,56 @@ Verify that the app launches:
 ./script/build_and_run.sh --verify
 ```
 
+Local OPUS-MT model folders are discovered at:
+
+```text
+~/Library/Application Support/Subs/Models/opus-mt/th-en
+~/Library/Application Support/Subs/Models/opus-mt/ja-en
+```
+
+Install the local OPUS-MT Python runtime and model assets:
+
+```sh
+./script/setup_opus_mt.sh
+```
+
+The setup script creates the default GUI runtime at:
+
+```text
+~/Library/Application Support/Subs/Runtime/opus/bin/python
+```
+
+For development, set `SUBS_OPUS_MT_MODELS_DIR` to a directory containing
+`th-en` and `ja-en`, or set `SUBS_OPUS_MT_MODEL_TH_EN` /
+`SUBS_OPUS_MT_MODEL_JA_EN` to explicit model folders. Set `SUBS_PYTHON` if the
+Python environment with `transformers` should override the App Support runtime.
+These environment variables are development overrides; the GUI app defaults to
+the App Support runtime so it does not depend on a shell session.
+
+The bundled OPUS-MT runner stays alive as a worker process while the app is
+translating. It reads newline-delimited JSON requests, writes JSON responses,
+and caches loaded models by language pair. Runtime translation loads model
+files with `local_files_only=True`; network access is only part of the setup
+script download step.
+
+Expected setup smoke-test output is a non-empty English translation for both
+Thai `สวัสดี` and Japanese `こんにちは`. The setup script installs `sacremoses`
+to avoid Marian tokenizer warnings. If Python still prints an OpenSSL/LibreSSL
+warning during setup downloads, it is a Python networking warning and not part
+of app runtime translation.
+
+The selected model repos are:
+
+- `Helsinki-NLP/opus-mt-th-en` for Thai -> English
+- `Helsinki-NLP/opus-mt-ja-en` for Japanese -> English
+
+These were chosen because they are exact language-pair translation models,
+usable through the local Transformers API, Apache-2.0 licensed, small enough for
+a first offline runtime, and easier to package/evaluate than a broad
+multilingual model. `opus-mt-ja-en` is used instead of `opus-mt-jap-en` because
+it matches the app's `ja` language code and the Hugging Face model card names
+Japanese/English directly.
+
 On first capture, macOS may ask for Screen & System Audio Recording permission
 and Speech Recognition permission.
 
@@ -195,6 +244,7 @@ Generated folders are ignored by git:
 
 - `.build/`: SwiftPM dependencies, build products, and local checkouts.
 - `dist/`: staged `.app` bundle created by `script/build_and_run.sh`.
+- `.venv-opus/`: optional development-only Python venv.
 
 Both folders can be deleted and regenerated. Deleting `.build/` saves space but
 means the next build will re-fetch and recompile dependencies.
@@ -226,16 +276,16 @@ The easiest way to explain the current build:
 Built now:
   Mac system audio capture
   Local Whisper speech-to-text
+  Local OPUS-MT Thai/Japanese -> English translation
   Menu bar control
   Subtitle window
   Transcript memory
 
 Still next:
-  Local Thai/Japanese -> English translation model
   Persistent encrypted transcript storage
   Better subtitle overlay behavior
 ```
 
-Apple Translation is not the long-term requirement. It is one possible local
-translation backend on macOS 15+. For macOS 14 and enterprise offline installs,
-the product should use a bundled local translation model instead.
+Apple Translation is no longer part of the realtime translation path. The
+current backend expects locally installed OPUS-MT model folders and a local
+Python runtime.

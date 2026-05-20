@@ -40,7 +40,6 @@ local audio capture
 Allowed backend examples:
 
 - Apple Speech only when `requiresOnDeviceRecognition = true`
-- Apple Translation / `TranslationSession`
 - WhisperKit with local model files
 - whisper.cpp with local model files
 - bundled Core ML models
@@ -62,6 +61,10 @@ Do not add:
 
 If a local model is missing or unsupported, the app must show a local
 availability error and stop that part of the pipeline.
+
+Setup scripts may download local model files and local runtime dependencies.
+Runtime translation must not download models or send meeting data to a network
+service.
 
 ## Backend contract
 
@@ -101,3 +104,21 @@ ScreenCaptureKit
 
 That architecture is acceptable only if the ASR and translation models run
 locally and model setup does not upload meeting data.
+
+## Translation model selection rules
+
+Prefer local translation models that:
+
+- match the exact supported language pairs before adding broader multilingual
+  coverage
+- can be downloaded, pinned, and loaded from local files only
+- expose a license that is compatible with local/bundled distribution review
+- have a small enough runtime footprint for a menu bar app
+- can be swapped behind the `TranslationBackend` interface without changing the
+  rest of the capture/subtitle pipeline
+
+The current first-choice models are `Helsinki-NLP/opus-mt-th-en` and
+`Helsinki-NLP/opus-mt-ja-en`. NLLB-style multilingual models remain candidates
+for broader language coverage, but they should not replace OPUS-MT unless local
+latency, memory, package size, and meeting-domain quality are better in
+evaluation.

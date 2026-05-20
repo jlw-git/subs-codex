@@ -19,7 +19,10 @@ let package = Package(
             dependencies: [
                 .product(name: "WhisperKit", package: "argmax-oss-swift")
             ],
-            path: "Sources/SubsApp"
+            path: "Sources/SubsApp",
+            resources: [
+                .process("Resources")
+            ]
         )
     ]
 )

@@ -13,13 +13,9 @@ final class MeetingSessionStore: ObservableObject {
 
     let capture = SystemAudioCaptureService()
     let speech = LocalSpeechRecognitionService()
+    let translation = LocalTranslationService()
     private var lastFinalTranscript = ""
-    private let translationBackendDeclaration = LocalOnlyBackendDeclaration(
-        name: "Apple Translation on-device session",
-        purpose: "translation",
-        location: .onDevice,
-        allowsCloudFallback: false
-    )
+    private var translationTask: Task<Void, Never>?
 
     var isRunning: Bool {
         capture.state == .running
@@ -58,6 +54,16 @@ final class MeetingSessionStore: ObservableObject {
         currentSourceSubtitle = "Starting local \(speechBackend.title) ASR..."
         currentTranslatedSubtitle = "Checking local-only runtime and model files."
         pendingTranslation = nil
+        translationTask?.cancel()
+
+        do {
+            try await translation.prepare()
+        } catch {
+            sessionState = .failed(error.localizedDescription)
+            currentSourceSubtitle = "Local translation is not ready."
+            currentTranslatedSubtitle = error.localizedDescription
+            return
+        }
 
         capture.onAudioBuffer = { [weak self] buffer in
             self?.speech.append(buffer)
@@ -90,6 +96,7 @@ final class MeetingSessionStore: ObservableObject {
         speech.stop()
         capture.onAudioBuffer = nil
         await capture.stop()
+        translationTask?.cancel()
         sessionState = .idle
     }
 
@@ -99,6 +106,7 @@ final class MeetingSessionStore: ObservableObject {
         currentSourceSubtitle = "Waiting for local audio..."
         currentTranslatedSubtitle = ""
         pendingTranslation = nil
+        translationTask?.cancel()
     }
 
     func applyTranslation(_ translatedText: String, for job: TranslationJob) {
@@ -108,10 +116,6 @@ final class MeetingSessionStore: ObservableObject {
         if job.isFinal {
             appendFinalSegment(sourceText: job.sourceText, translatedText: translatedText)
         }
-    }
-
-    func canUseTranslationBackend() throws {
-        try LocalOnlyPolicy.validate(translationBackendDeclaration)
     }
 
     func translationFailed(_ error: Error, for job: TranslationJob) {
@@ -125,12 +129,30 @@ final class MeetingSessionStore: ObservableObject {
     private func handleRecognition(_ text: String, isFinal: Bool) {
         guard !text.isEmpty else { return }
         currentSourceSubtitle = text
-        pendingTranslation = TranslationJob(
+        let job = TranslationJob(
             sourceText: text,
             sourceLanguage: Self.localeLanguage(for: sourceLanguage),
             targetLanguage: Self.localeLanguage(for: targetLanguage),
             isFinal: isFinal
         )
+        pendingTranslation = job
+        enqueueTranslation(job)
+    }
+
+    private func enqueueTranslation(_ job: TranslationJob) {
+        translationTask?.cancel()
+        translationTask = Task { [weak self] in
+            guard let self else { return }
+
+            do {
+                let translatedText = try await translation.translate(job)
+                guard !Task.isCancelled else { return }
+                applyTranslation(translatedText, for: job)
+            } catch {
+                guard !Task.isCancelled else { return }
+                translationFailed(error, for: job)
+            }
+        }
     }
 
     private func appendFinalSegment(sourceText: String, translatedText: String) {

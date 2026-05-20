@@ -20,7 +20,19 @@ struct SettingsView: View {
                 }
 
                 LabeledContent("Active ASR", value: store.speech.activeBackendName)
-                LabeledContent("Translation", value: "Apple on-device Translation, macOS 15+")
+                LabeledContent("Translation", value: store.translation.activeBackendName)
+                LabeledContent("Translation status", value: store.translation.translationStatus.title)
+                LabeledContent("Runtime", value: store.translation.runtimePath)
+                LabeledContent("Thai model", value: store.translation.thaiModelStatus)
+                LabeledContent("Japanese model", value: store.translation.japaneseModelStatus)
+
+                if let latestPreflightError = store.translation.latestPreflightError {
+                    LabeledContent("Preflight error") {
+                        Text(latestPreflightError)
+                            .foregroundStyle(.red)
+                            .textSelection(.enabled)
+                    }
+                }
             }
         }
         .formStyle(.grouped)

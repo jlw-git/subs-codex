@@ -1,5 +1,4 @@
 import SwiftUI
-import Translation
 
 struct LiveSubtitlesView: View {
     @EnvironmentObject private var store: MeetingSessionStore
@@ -49,59 +48,10 @@ struct LiveSubtitlesView: View {
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
             }
 
-            if #unavailable(macOS 15.0) {
-                Text("Apple on-device translation requires macOS 15 or later. This Mac can still run local capture and supported local speech-to-text, but Thai/Japanese to English translation needs macOS 15 or a bundled local translation model.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .padding()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-            }
-
             Spacer()
         }
         .padding(20)
         .navigationTitle("Live")
-        .background {
-            if #available(macOS 15.0, *) {
-                TranslationTaskHost()
-                    .environmentObject(store)
-                    .frame(width: 0, height: 0)
-            }
-        }
-    }
-}
-
-@available(macOS 15.0, *)
-private struct TranslationTaskHost: View {
-    @EnvironmentObject private var store: MeetingSessionStore
-    @State private var configuration: TranslationSession.Configuration?
-
-    var body: some View {
-        Color.clear
-            .onChange(of: store.pendingTranslation?.id) { _, _ in
-                guard let job = store.pendingTranslation else {
-                    configuration = nil
-                    return
-                }
-
-                configuration = TranslationSession.Configuration(
-                    source: job.sourceLanguage,
-                    target: job.targetLanguage
-                )
-                configuration?.invalidate()
-            }
-            .translationTask(configuration) { session in
-                guard let job = store.pendingTranslation else { return }
-
-                do {
-                    try store.canUseTranslationBackend()
-                    let response = try await session.translate(job.sourceText)
-                    store.applyTranslation(response.targetText, for: job)
-                } catch {
-                    store.translationFailed(error, for: job)
-                }
-            }
     }
 }
 
