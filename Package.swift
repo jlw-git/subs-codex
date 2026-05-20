@@ -10,9 +10,15 @@ let package = Package(
     products: [
         .executable(name: "Subs", targets: ["SubsApp"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/argmaxinc/argmax-oss-swift.git", from: "0.9.0")
+    ],
     targets: [
         .executableTarget(
             name: "SubsApp",
+            dependencies: [
+                .product(name: "WhisperKit", package: "argmax-oss-swift")
+            ],
             path: "Sources/SubsApp"
         )
     ]

@@ -38,8 +38,10 @@ The app intentionally does not fall back to cloud recognition or translation.
 
 The app now has an explicit ASR backend selector:
 
-- `Local Whisper`: the intended production ASR path; currently a fail-closed
-  placeholder until a local Whisper runtime and model are bundled.
+- `Local Whisper`: local WhisperKit backend. It requires local Core ML model
+  files at `~/Library/Application Support/Subs/Models/whisperkit` and sets
+  `download: false` so runtime transcription does not fetch models or use cloud
+  fallback.
 - `Apple Speech`: local-only Apple Speech backend for languages/macOS versions
   where `supportsOnDeviceRecognition` is available.
 
@@ -113,7 +115,8 @@ The app is a SwiftPM macOS app.
 - `Sources/SubsApp/Services/SystemAudioCaptureService.swift`: local system-audio
   capture using `ScreenCaptureKit`.
 - `Sources/SubsApp/Services/LocalSpeechRecognitionService.swift`: on-device
-  speech recognition orchestration and backend selection.
+  speech recognition orchestration, backend selection, Apple Speech backend, and
+  local WhisperKit backend.
 - `Sources/SubsApp/Models/SpeechRecognitionBackendKind.swift`: available ASR
   backend choices.
 - `Sources/SubsApp/Models/TranscriptModels.swift`: transcript and translation
@@ -130,6 +133,8 @@ The app is a SwiftPM macOS app.
 - `.codex/environments/environment.toml`: gives Codex a Run action.
 - `docs/LOCAL_ONLY_ARCHITECTURE.md`: non-negotiable no-cloud architecture
   policy for future backend changes.
+- `docs/LOCAL_WHISPER_MODEL_SETUP.md`: where local WhisperKit model files must
+  be installed for the `Local Whisper` backend.
 
 ## Current language support
 
@@ -154,7 +159,7 @@ Translation locales:
 This is still a prototype.
 
 - Thai ASR currently requires replacing the Apple Speech backend with a local
-  Whisper-style ASR model.
+  WhisperKit model installed at `~/Library/Application Support/Subs/Models/whisperkit`.
 - Translation through Apple's Translation framework requires macOS 15 or later.
 - The app still builds and runs on macOS 14, but translation is only enabled on
   macOS 15+.

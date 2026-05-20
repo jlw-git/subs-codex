@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import Speech
+import WhisperKit
 
 @MainActor
 final class LocalSpeechRecognitionService: ObservableObject {
@@ -84,17 +85,155 @@ private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBacke
         allowsCloudFallback: false
     )
 
+    private let chunkSampleCount = WhisperKit.sampleRate * 5
+    private var whisperKit: WhisperKit?
+    private var samples: [Float] = []
+    private var isTranscribing = false
+    private var languageCode = "th"
+    private var onRecognition: ((String, Bool) -> Void)?
+    private var onStateChange: ((CaptureState) -> Void)?
+
     func start(
         language: String,
         onRecognition: @escaping (String, Bool) -> Void,
         onStateChange: @escaping (CaptureState) -> Void
     ) async {
-        onStateChange(.failed("Local Whisper ASR is selected for \(language), but no local Whisper model/runtime is installed yet. Subs stopped here instead of using a cloud fallback."))
+        self.onRecognition = onRecognition
+        self.onStateChange = onStateChange
+        languageCode = Self.languageCode(for: language)
+        samples.removeAll(keepingCapacity: true)
+        isTranscribing = false
+
+        guard let modelFolder = Self.localModelFolder(), FileManager.default.fileExists(atPath: modelFolder) else {
+            onStateChange(.failed("""
+            Local Whisper ASR is selected for \(language), but no local Whisper model folder was found. Install a WhisperKit Core ML model at ~/Library/Application Support/Subs/Models/whisperkit and retry. Subs stopped here instead of using a cloud fallback.
+            """))
+            return
+        }
+
+        do {
+            let config = WhisperKitConfig(
+                modelFolder: modelFolder,
+                verbose: false,
+                prewarm: false,
+                load: true,
+                download: false
+            )
+            whisperKit = try await WhisperKit(config)
+            onStateChange(.running)
+        } catch {
+            onStateChange(.failed("Local Whisper ASR could not load the local model folder: \(error.localizedDescription). Subs did not use a cloud fallback."))
+        }
     }
 
-    func append(_ buffer: AVAudioPCMBuffer) {}
+    func append(_ buffer: AVAudioPCMBuffer) {
+        guard whisperKit != nil, let convertedSamples = Self.convertToWhisperSamples(buffer) else { return }
+        samples.append(contentsOf: convertedSamples)
 
-    func stop() {}
+        guard samples.count >= chunkSampleCount, !isTranscribing else { return }
+        let chunk = samples
+        samples.removeAll(keepingCapacity: true)
+        isTranscribing = true
+
+        Task { @MainActor [weak self] in
+            await self?.transcribe(chunk)
+        }
+    }
+
+    func stop() {
+        whisperKit = nil
+        samples.removeAll(keepingCapacity: true)
+        isTranscribing = false
+        onRecognition = nil
+        onStateChange = nil
+    }
+
+    private func transcribe(_ audioSamples: [Float]) async {
+        defer { isTranscribing = false }
+
+        guard let whisperKit else { return }
+
+        do {
+            let options = DecodingOptions(
+                task: .transcribe,
+                language: languageCode,
+                temperature: 0,
+                usePrefillPrompt: true,
+                skipSpecialTokens: true,
+                withoutTimestamps: true,
+                wordTimestamps: false
+            )
+            let results = try await whisperKit.transcribe(audioArray: audioSamples, decodeOptions: options)
+            let transcript = TranscriptionUtilities.mergeTranscriptionResults(results).text
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard !transcript.isEmpty else { return }
+            onRecognition?(transcript, true)
+        } catch {
+            onStateChange?(.failed("Local Whisper ASR failed while transcribing locally: \(error.localizedDescription). Subs did not use a cloud fallback."))
+        }
+    }
+
+    private static func localModelFolder() -> String? {
+        guard let applicationSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+
+        return applicationSupport
+            .appendingPathComponent("Subs", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+            .appendingPathComponent("whisperkit", isDirectory: true)
+            .path
+    }
+
+    private static func languageCode(for language: String) -> String {
+        switch language {
+        case "Japanese": "ja"
+        case "Thai": "th"
+        default: "en"
+        }
+    }
+
+    private static func convertToWhisperSamples(_ buffer: AVAudioPCMBuffer) -> [Float]? {
+        guard let targetFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: Double(WhisperKit.sampleRate),
+            channels: 1,
+            interleaved: false
+        ) else {
+            return nil
+        }
+
+        let sourceFormat = buffer.format
+        let ratio = targetFormat.sampleRate / sourceFormat.sampleRate
+        let frameCapacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 1
+        guard let convertedBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: frameCapacity),
+              let converter = AVAudioConverter(from: sourceFormat, to: targetFormat) else {
+            return nil
+        }
+
+        var didProvideInput = false
+        var conversionError: NSError?
+        let status = converter.convert(to: convertedBuffer, error: &conversionError) { _, outStatus in
+            if didProvideInput {
+                outStatus.pointee = .noDataNow
+                return nil
+            }
+
+            didProvideInput = true
+            outStatus.pointee = .haveData
+            return buffer
+        }
+
+        guard status != .error, conversionError == nil, let channelData = convertedBuffer.floatChannelData else {
+            return nil
+        }
+
+        let frameLength = Int(convertedBuffer.frameLength)
+        guard frameLength > 0 else { return nil }
+
+        return Array(UnsafeBufferPointer(start: channelData[0], count: frameLength))
+    }
 }
 
 @MainActor
