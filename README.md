@@ -131,6 +131,10 @@ The app is a SwiftPM macOS app.
   controls in the main window.
 - `Sources/SubsApp/Views/SettingsView.swift`: privacy/runtime settings display.
 - `script/build_and_run.sh`: builds, stages, and launches the macOS app bundle.
+- `script/evaluate_translation.py`: runs local OPUS-MT text translation quality
+  checks against synthetic fixtures.
+- `script/setup_m2m100_bakeoff.sh`: installs the eval-only M2M100 418M
+  translation candidate for local bakeoff runs.
 - `.codex/environments/environment.toml`: gives Codex a Run action.
 - `docs/LOCAL_ONLY_ARCHITECTURE.md`: non-negotiable no-cloud architecture
   policy for future backend changes.
@@ -227,6 +231,50 @@ to avoid Marian tokenizer warnings. If Python still prints an OpenSSL/LibreSSL
 warning during setup downloads, it is a Python networking warning and not part
 of app runtime translation.
 
+Run the local translation quality eval. The default backend is still OPUS-MT:
+
+```sh
+./script/evaluate_translation.py
+```
+
+The eval uses synthetic meeting-style fixtures from
+`eval/fixtures/translation_text_cases.jsonl`, drives the bundled OPUS-MT worker,
+and writes ignored JSON/Markdown reports under `eval/reports/`. Automatic
+checks cover non-empty output, required term coverage, acceptable required term
+groups, forbidden term hits, rough standard-library text similarity, and
+per-case latency. Reports include per-language summaries, term miss summaries,
+slowest cases, backend summaries, and reviewer fields. Treat those scores as
+triage for human review, not as a formal MT benchmark.
+
+Useful eval filters:
+
+```sh
+./script/evaluate_translation.py --case ja-risk-001
+./script/evaluate_translation.py --language-pair th-en
+./script/evaluate_translation.py --backend opus-mt
+./script/evaluate_translation.py --no-report
+./script/evaluate_translation.py --strict
+```
+
+To run the eval-only M2M100 418M bakeoff candidate:
+
+```sh
+./script/setup_m2m100_bakeoff.sh
+./script/evaluate_translation.py --backend m2m100-418m
+./script/evaluate_translation.py --backend all
+```
+
+M2M100 files are stored at:
+
+```text
+~/Library/Application Support/Subs/Models/translation-bakeoff/m2m100-418m
+```
+
+This does not change the app runtime translation backend. Eval worker requests
+time out after 180 seconds by default; override with
+`SUBS_TRANSLATION_EVAL_TIMEOUT_SECONDS` if a slower local machine needs a longer
+bakeoff run.
+
 The selected model repos are:
 
 - `Helsinki-NLP/opus-mt-th-en` for Thai -> English
@@ -238,6 +286,12 @@ a first offline runtime, and easier to package/evaluate than a broad
 multilingual model. `opus-mt-ja-en` is used instead of `opus-mt-jap-en` because
 it matches the app's `ja` language code and the Hugging Face model card names
 Japanese/English directly.
+
+The eval-only bakeoff candidate is `facebook/m2m100_418M`, which is MIT
+licensed and supports Thai, Japanese, and English in one model family. NLLB-200
+is not a production candidate in this repo because the available distilled
+checkpoint is CC-BY-NC and its model card says it is not released for production
+deployment.
 
 On first capture, macOS may ask for Screen & System Audio Recording permission
 and Speech Recognition permission.
@@ -256,6 +310,7 @@ Generated folders are ignored by git:
 - `.build/`: SwiftPM dependencies, build products, and local checkouts.
 - `dist/`: staged `.app` bundle created by `script/build_and_run.sh`.
 - `.venv-opus/`: optional development-only Python venv.
+- `eval/reports/`: generated local translation eval reports.
 
 Both folders can be deleted and regenerated. Deleting `.build/` saves space but
 means the next build will re-fetch and recompile dependencies.

@@ -58,6 +58,76 @@ Known quality caveat:
   must be evaluated with real meeting snippets before treating this as
   production quality.
 
+## Translation quality eval
+
+Run the local text-only eval with OPUS-MT, which remains the default backend:
+
+```sh
+./script/evaluate_translation.py
+```
+
+The eval uses synthetic, non-sensitive meeting-style cases in
+`eval/fixtures/translation_text_cases.jsonl`. It talks to the same bundled
+`opus_mt_translate.py --worker` process used by the app, honors the same runtime
+and model environment overrides, and writes ignored Markdown/JSON reports under
+`eval/reports/`.
+
+Useful reviewer commands:
+
+```sh
+./script/evaluate_translation.py --case ja-risk-001
+./script/evaluate_translation.py --language-pair th-en
+./script/evaluate_translation.py --backend opus-mt
+./script/evaluate_translation.py --no-report
+./script/evaluate_translation.py --strict
+```
+
+Run the eval-only M2M100 418M bakeoff candidate with:
+
+```sh
+./script/setup_m2m100_bakeoff.sh
+./script/evaluate_translation.py --backend m2m100-418m
+./script/evaluate_translation.py --backend all
+```
+
+M2M100 is installed under:
+
+```text
+~/Library/Application Support/Subs/Models/translation-bakeoff/m2m100-418m
+```
+
+This bakeoff path does not change `LocalTranslationService` or the app runtime
+backend. Eval worker requests time out after 180 seconds by default; override
+with `SUBS_TRANSLATION_EVAL_TIMEOUT_SECONDS` when intentionally testing a slower
+local candidate.
+
+V1 scoring is deliberately lightweight:
+
+- output must be non-empty
+- required English terms should appear
+- required term groups can define acceptable alternate phrasings
+- forbidden English terms should not appear
+- rough similarity is computed with Python's standard-library text matching
+- latency is recorded per case
+
+These checks are triage signals for human review, not formal BLEU/chrF scores.
+
+## Eval-only model bakeoff
+
+The current production-path translation backend remains OPUS-MT:
+
+- `Helsinki-NLP/opus-mt-th-en`: Apache-2.0, exact Thai -> English pair
+- `Helsinki-NLP/opus-mt-ja-en`: Apache-2.0, exact Japanese -> English pair
+
+The first eval-only challenger is:
+
+- `facebook/m2m100_418M`: MIT, multilingual, supports Thai, Japanese, and
+  English in one model family
+
+NLLB-200 is not included as a production candidate for now. The available
+distilled 600M checkpoint is CC-BY-NC and its model card says it is not released
+for production deployment.
+
 Integration:
 
 1. Install the models locally.
