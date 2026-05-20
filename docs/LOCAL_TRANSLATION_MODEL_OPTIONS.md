@@ -64,10 +64,12 @@ Integration:
 2. The app invokes the bundled `opus_mt_translate.py` runner as a persistent
    worker process.
 3. The runner loads models through Python Transformers with `local_files_only`.
-4. The runner caches loaded models by language pair for repeated subtitle
+4. Capture startup warms only the selected language pair in the background so
+   ASR and audio capture are not blocked by Python/model initialization.
+5. The runner caches loaded models by language pair for repeated subtitle
    translations.
-5. The runner is wrapped behind a `TranslationBackend` interface.
-6. Later optimize with CTranslate2, Marian, Core ML, or another native bridge.
+6. The runner is wrapped behind a `TranslationBackend` interface.
+7. Later optimize with CTranslate2, Marian, Core ML, or another native bridge.
 
 Default runtime:
 

@@ -19,9 +19,11 @@ The current code is moving toward a fully bundled local model stack:
 
 - **ASR / speech-to-text**: Local WhisperKit backend is wired and a local model
   has been installed on the development machine at
-  `~/Library/Application Support/Subs/Models/whisperkit`.
+  `~/Library/Application Support/Subs/Models/whisperkit`. The app keeps the
+  loaded Whisper backend warm across stop/start cycles while it remains open.
 - **Translation**: local OPUS-MT runtime for Thai/Japanese -> English. It uses
-  local model files only and does not use Apple Translation.
+  local model files only and does not use Apple Translation. Translation warmup
+  runs after audio capture starts and preflights only the selected language pair.
 
 The current ASR choices are:
 
@@ -55,10 +57,14 @@ The core pipeline is:
 Teams/system audio
   -> ScreenCaptureKit local audio capture
   -> Local WhisperKit ASR
-  -> local OPUS-MT translation backend
+  -> local OPUS-MT translation backend for the selected pair
   -> live subtitle overlay
   -> local transcript memory
 ```
+
+Startup is staged so ASR and audio capture are not blocked by the heavier
+translation runtime. Whisper loads from local Core ML files, capture starts, and
+then the OPUS-MT worker warms the selected translation model in the background.
 
 No OpenAI API, cloud transcription API, cloud translation API, or network SDK is
 used in the app.
@@ -73,7 +79,8 @@ The local privacy story is enforced in code:
 - Apple Speech, when selected, is configured with
   `requiresOnDeviceRecognition = true`.
 - Local translation uses the bundled OPUS-MT runner script with locally
-  installed model folders.
+  installed model folders. Runtime warmup and translation load only the selected
+  local language-pair folder.
 - The app does not include any cloud API client.
 - Transcript memory is currently in app memory only.
 
@@ -209,6 +216,10 @@ translating. It reads newline-delimited JSON requests, writes JSON responses,
 and caches loaded models by language pair. Runtime translation loads model
 files with `local_files_only=True`; network access is only part of the setup
 script download step.
+
+During capture startup, the app warms only the selected language pair in the
+background. The first translation for a cold pair may still include local Python
+and model-load time, but ASR and audio capture can already be running.
 
 Expected setup smoke-test output is a non-empty English translation for both
 Thai `สวัสดี` and Japanese `こんにちは`. The setup script installs `sacremoses`

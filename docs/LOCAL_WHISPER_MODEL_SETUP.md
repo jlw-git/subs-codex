@@ -18,6 +18,11 @@ download: false
 That means Subs does not download models while processing meeting audio and does
 not fall back to a cloud speech service.
 
+The local WhisperKit backend loads the model from this folder on first use and
+keeps it warm while the app process is open. Stopping and starting capture should
+not unload the model, so repeated sessions avoid paying the full local model-load
+cost again.
+
 ## Current development machine
 
 The development machine currently has a small WhisperKit model installed at the

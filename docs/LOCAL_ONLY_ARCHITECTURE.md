@@ -66,6 +66,11 @@ Setup scripts may download local model files and local runtime dependencies.
 Runtime translation must not download models or send meeting data to a network
 service.
 
+Startup may stage local components independently. ASR and audio capture should be
+allowed to start once their local requirements pass; slower downstream local
+translation warmup can run in the background as long as failures are surfaced
+locally and no cloud fallback is introduced.
+
 ## Backend contract
 
 Every ASR, translation, summarization, memory, and diagnostics backend must be
