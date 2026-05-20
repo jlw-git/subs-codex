@@ -182,6 +182,23 @@ Verify that the app launches:
 On first capture, macOS may ask for Screen & System Audio Recording permission
 and Speech Recognition permission.
 
+## Housekeeping
+
+The source tree is intentionally small:
+
+- `Sources/` contains the app code.
+- `docs/` contains architecture notes.
+- `script/` contains the build/run helper.
+- `.codex/` contains the Codex Run action.
+
+Generated folders are ignored by git:
+
+- `.build/`: SwiftPM dependencies, build products, and local checkouts.
+- `dist/`: staged `.app` bundle created by `script/build_and_run.sh`.
+
+Both folders can be deleted and regenerated. Deleting `.build/` saves space but
+means the next build will re-fetch and recompile dependencies.
+
 ## How to explain it
 
 A simple way to describe the product:
