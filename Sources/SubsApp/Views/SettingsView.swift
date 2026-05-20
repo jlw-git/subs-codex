@@ -13,7 +13,13 @@ struct SettingsView: View {
             }
 
             Section("Model Runtime") {
-                LabeledContent("Transcription", value: "Apple on-device Speech")
+                Picker("Transcription", selection: $store.speechBackend) {
+                    ForEach(SpeechRecognitionBackendKind.allCases) { backend in
+                        Text(backend.title).tag(backend)
+                    }
+                }
+
+                LabeledContent("Active ASR", value: store.speech.activeBackendName)
                 LabeledContent("Translation", value: "Apple on-device Translation, macOS 15+")
             }
         }

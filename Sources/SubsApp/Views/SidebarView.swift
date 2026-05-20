@@ -20,6 +20,12 @@ struct SidebarView: View {
                 Picker("Target", selection: $store.targetLanguage) {
                     Text("English").tag("English")
                 }
+
+                Picker("ASR", selection: $store.speechBackend) {
+                    ForEach(SpeechRecognitionBackendKind.allCases) { backend in
+                        Text(backend.title).tag(backend)
+                    }
+                }
             }
         }
         .listStyle(.sidebar)

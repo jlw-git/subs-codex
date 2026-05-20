@@ -36,6 +36,13 @@ be a bundled local model stack:
 
 The app intentionally does not fall back to cloud recognition or translation.
 
+The app now has an explicit ASR backend selector:
+
+- `Local Whisper`: the intended production ASR path; currently a fail-closed
+  placeholder until a local Whisper runtime and model are bundled.
+- `Apple Speech`: local-only Apple Speech backend for languages/macOS versions
+  where `supportsOnDeviceRecognition` is available.
+
 ## What the app does
 
 Subs sits in the macOS menu bar. During a meeting, the user starts local capture
@@ -106,7 +113,9 @@ The app is a SwiftPM macOS app.
 - `Sources/SubsApp/Services/SystemAudioCaptureService.swift`: local system-audio
   capture using `ScreenCaptureKit`.
 - `Sources/SubsApp/Services/LocalSpeechRecognitionService.swift`: on-device
-  speech recognition using `SFSpeechRecognizer`.
+  speech recognition orchestration and backend selection.
+- `Sources/SubsApp/Models/SpeechRecognitionBackendKind.swift`: available ASR
+  backend choices.
 - `Sources/SubsApp/Models/TranscriptModels.swift`: transcript and translation
   data models.
 - `Sources/SubsApp/Views/MenuBarControlsView.swift`: menu bar controls.

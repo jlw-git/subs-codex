@@ -4,6 +4,7 @@ import Foundation
 final class MeetingSessionStore: ObservableObject {
     @Published var sourceLanguage = "Thai"
     @Published var targetLanguage = "English"
+    @Published var speechBackend: SpeechRecognitionBackendKind = .localWhisper
     @Published private(set) var segments: [TranscriptSegment] = []
     @Published private(set) var currentSourceSubtitle = "Waiting for local audio..."
     @Published private(set) var currentTranslatedSubtitle = ""
@@ -32,7 +33,7 @@ final class MeetingSessionStore: ObservableObject {
             self?.speech.append(buffer)
         }
 
-        await speech.start(language: sourceLanguage) { [weak self] text, isFinal in
+        await speech.start(language: sourceLanguage, backendKind: speechBackend) { [weak self] text, isFinal in
             self?.handleRecognition(text, isFinal: isFinal)
         }
 

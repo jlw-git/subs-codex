@@ -44,6 +44,12 @@ struct MenuBarControlsView: View {
                 Text("English").tag("English")
             }
 
+            Picker("ASR", selection: $store.speechBackend) {
+                ForEach(SpeechRecognitionBackendKind.allCases) { backend in
+                    Text(backend.title).tag(backend)
+                }
+            }
+
             Divider()
 
             Button {

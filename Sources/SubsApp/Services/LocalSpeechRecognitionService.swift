@@ -6,8 +6,101 @@ import Speech
 final class LocalSpeechRecognitionService: ObservableObject {
     @Published private(set) var state: CaptureState = .idle
     @Published private(set) var latestTranscript = "Waiting for local audio..."
+    @Published private(set) var activeBackendName = SpeechRecognitionBackendKind.localWhisper.title
 
-    private let backendDeclaration = LocalOnlyBackendDeclaration(
+    private var activeBackend: SpeechRecognitionBackend?
+
+    func start(
+        language: String,
+        backendKind: SpeechRecognitionBackendKind,
+        onRecognition: @escaping (String, Bool) -> Void
+    ) async {
+        stop()
+        state = .requestingPermission
+
+        let backend = Self.makeBackend(kind: backendKind)
+        activeBackend = backend
+        activeBackendName = backend.displayName
+
+        do {
+            try LocalOnlyPolicy.validate(backend.declaration)
+        } catch {
+            state = .failed(error.localizedDescription)
+            return
+        }
+
+        await backend.start(
+            language: language,
+            onRecognition: { [weak self] text, isFinal in
+                self?.latestTranscript = text
+                onRecognition(text, isFinal)
+            },
+            onStateChange: { [weak self] state in
+                self?.state = state
+            }
+        )
+    }
+
+    func append(_ buffer: AVAudioPCMBuffer) {
+        activeBackend?.append(buffer)
+    }
+
+    func stop() {
+        activeBackend?.stop()
+        activeBackend = nil
+        latestTranscript = "Waiting for local audio..."
+        state = .idle
+    }
+
+    private static func makeBackend(kind: SpeechRecognitionBackendKind) -> SpeechRecognitionBackend {
+        switch kind {
+        case .localWhisper: LocalWhisperSpeechRecognitionBackend()
+        case .appleSpeech: AppleSpeechRecognitionBackend()
+        }
+    }
+}
+
+@MainActor
+private protocol SpeechRecognitionBackend {
+    var displayName: String { get }
+    var declaration: LocalOnlyBackendDeclaration { get }
+
+    func start(
+        language: String,
+        onRecognition: @escaping (String, Bool) -> Void,
+        onStateChange: @escaping (CaptureState) -> Void
+    ) async
+    func append(_ buffer: AVAudioPCMBuffer)
+    func stop()
+}
+
+@MainActor
+private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBackend {
+    let displayName = "Local Whisper"
+    let declaration = LocalOnlyBackendDeclaration(
+        name: "Local Whisper ASR",
+        purpose: "speech-to-text",
+        location: .onDevice,
+        allowsCloudFallback: false
+    )
+
+    func start(
+        language: String,
+        onRecognition: @escaping (String, Bool) -> Void,
+        onStateChange: @escaping (CaptureState) -> Void
+    ) async {
+        onStateChange(.failed("Local Whisper ASR is selected for \(language), but no local Whisper model/runtime is installed yet. Subs stopped here instead of using a cloud fallback."))
+    }
+
+    func append(_ buffer: AVAudioPCMBuffer) {}
+
+    func stop() {}
+}
+
+@MainActor
+private final class AppleSpeechRecognitionBackend: NSObject, SpeechRecognitionBackend {
+    let displayName = "Apple Speech"
+    let declaration = LocalOnlyBackendDeclaration(
         name: "Apple Speech on-device recognition",
         purpose: "speech-to-text",
         location: .onDevice,
@@ -18,36 +111,27 @@ final class LocalSpeechRecognitionService: ObservableObject {
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
 
-    func start(language: String, onRecognition: @escaping (String, Bool) -> Void) async {
-        stop()
-        state = .requestingPermission
-
-        do {
-            try LocalOnlyPolicy.validate(backendDeclaration)
-        } catch {
-            state = .failed(error.localizedDescription)
-            return
-        }
-
-        guard language != "Thai" else {
-            state = .failed("Thai is not supported by the current Apple Speech backend on this Mac. To keep Thai fully local, Subs needs a local Whisper-style ASR model backend next. No cloud fallback was used.")
-            return
-        }
+    func start(
+        language: String,
+        onRecognition: @escaping (String, Bool) -> Void,
+        onStateChange: @escaping (CaptureState) -> Void
+    ) async {
+        onStateChange(.requestingPermission)
 
         let authorizationStatus = await requestAuthorization()
         guard authorizationStatus == .authorized else {
-            state = .failed("Speech Recognition permission is required for local transcription.")
+            onStateChange(.failed("Speech Recognition permission is required for local transcription."))
             return
         }
 
         let locale = Locale(identifier: Self.localeIdentifier(for: language))
         guard let recognizer = SFSpeechRecognizer(locale: locale) else {
-            state = .failed("Speech recognition is not available for \(language).")
+            onStateChange(.failed("Speech recognition is not available for \(language)."))
             return
         }
 
         guard recognizer.supportsOnDeviceRecognition else {
-            state = .failed("On-device speech recognition is not installed or supported for \(language) in the current Apple Speech backend. Subs did not fall back to cloud recognition.")
+            onStateChange(.failed("On-device speech recognition is not installed or supported for \(language) in the Apple Speech backend. Subs did not fall back to cloud recognition."))
             return
         }
 
@@ -57,21 +141,17 @@ final class LocalSpeechRecognitionService: ObservableObject {
 
         self.recognizer = recognizer
         self.request = request
-        state = .running
-        latestTranscript = "Listening locally..."
+        onStateChange(.running)
 
-        recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
+        recognitionTask = recognizer.recognitionTask(with: request) { result, error in
             Task { @MainActor in
-                guard let self else { return }
-
                 if let result {
                     let text = result.bestTranscription.formattedString
-                    self.latestTranscript = text
                     onRecognition(text, result.isFinal)
                 }
 
                 if let error {
-                    self.state = .failed("Local speech recognition stopped: \(error.localizedDescription)")
+                    onStateChange(.failed("Local speech recognition stopped: \(error.localizedDescription)"))
                 }
             }
         }
@@ -87,8 +167,6 @@ final class LocalSpeechRecognitionService: ObservableObject {
         request?.endAudio()
         request = nil
         recognizer = nil
-        latestTranscript = "Waiting for local audio..."
-        state = .idle
     }
 
     private func requestAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
