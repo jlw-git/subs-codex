@@ -15,35 +15,26 @@ The current product focus is:
 
 ## Current backend status
 
-The current code uses Apple's built-in local frameworks first:
+The current code is moving toward a fully bundled local model stack:
 
-- Apple Speech for on-device speech recognition
-- Apple Translation for on-device translation
+- **ASR / speech-to-text**: Local WhisperKit backend is wired and a local model
+  has been installed on the development machine at
+  `~/Library/Application Support/Subs/Models/whisperkit`.
+- **Translation**: still needs a local translation backend for macOS 14. Apple
+  Translation remains available only on macOS 15+.
 
-This is useful for proving the local-first app architecture, but it has two
-important product constraints:
+The current ASR choices are:
 
-- Thai speech recognition is not supported by the current Apple Speech backend
-  on the test Mac.
-- Apple Translation requires macOS 15 or later.
+- `Local Whisper`: primary product path for Thai/Japanese speech-to-text.
+- `Apple Speech`: diagnostic/local fallback for languages and Macs where
+  Apple's `supportsOnDeviceRecognition` is available.
 
-For production Thai/Japanese support across more Macs, the next backend should
-be a bundled local model stack:
+The next major backend is local translation:
 
-- WhisperKit, whisper.cpp, or another local Whisper-style ASR runtime for
-  Thai/Japanese speech-to-text
-- a bundled local translation model for Thai/Japanese to English
+- OPUS-MT Thai -> English and Japanese -> English are good first candidates.
+- NLLB-200 is a stronger multilingual candidate, but integration is heavier.
 
 The app intentionally does not fall back to cloud recognition or translation.
-
-The app now has an explicit ASR backend selector:
-
-- `Local Whisper`: local WhisperKit backend. It requires local Core ML model
-  files at `~/Library/Application Support/Subs/Models/whisperkit` and sets
-  `download: false` so runtime transcription does not fetch models or use cloud
-  fallback.
-- `Apple Speech`: local-only Apple Speech backend for languages/macOS versions
-  where `supportsOnDeviceRecognition` is available.
 
 ## What the app does
 
@@ -62,8 +53,8 @@ The core pipeline is:
 ```text
 Teams/system audio
   -> ScreenCaptureKit local audio capture
-  -> Apple Speech on-device speech recognition
-  -> Apple Translation on-device translation
+  -> Local WhisperKit ASR
+  -> local translation backend (next)
   -> live subtitle overlay
   -> local transcript memory
 ```
@@ -76,14 +67,16 @@ used in the app.
 The local privacy story is enforced in code:
 
 - Audio capture uses Apple's `ScreenCaptureKit`.
-- Speech recognition uses Apple's `Speech` framework.
-- Speech recognition is configured with `requiresOnDeviceRecognition = true`.
-- Translation uses Apple's `TranslationSession`.
+- Primary speech recognition uses local WhisperKit model files.
+- WhisperKit is configured with `download: false` at runtime.
+- Apple Speech, when selected, is configured with
+  `requiresOnDeviceRecognition = true`.
+- Apple Translation, when available on macOS 15+, uses `TranslationSession`.
 - The app does not include any cloud API client.
 - Transcript memory is currently in app memory only.
 
-If on-device speech recognition is unavailable for a selected language, the app
-shows an error instead of silently falling back to cloud recognition.
+If a local model/runtime is unavailable for a selected feature, the app shows an
+error instead of silently falling back to cloud processing.
 
 The full local-only architecture policy lives in
 `docs/LOCAL_ONLY_ARCHITECTURE.md`. Any future ASR, translation, summary, memory,
@@ -124,7 +117,7 @@ The app is a SwiftPM macOS app.
 - `Sources/SubsApp/Views/MenuBarControlsView.swift`: menu bar controls.
 - `Sources/SubsApp/Views/SubtitleOverlayView.swift`: floating live subtitle UI.
 - `Sources/SubsApp/Views/LiveSubtitlesView.swift`: main live subtitle panel and
-  Apple Translation task host.
+  translation task host.
 - `Sources/SubsApp/Views/TranscriptMemoryView.swift`: bilingual transcript list.
 - `Sources/SubsApp/Views/SidebarView.swift`: session status and language
   controls in the main window.
@@ -135,6 +128,8 @@ The app is a SwiftPM macOS app.
   policy for future backend changes.
 - `docs/LOCAL_WHISPER_MODEL_SETUP.md`: where local WhisperKit model files must
   be installed for the `Local Whisper` backend.
+- `docs/LOCAL_TRANSLATION_MODEL_OPTIONS.md`: local translation model options for
+  Thai/Japanese -> English on macOS 14.
 
 ## Current language support
 
@@ -158,13 +153,12 @@ Translation locales:
 
 This is still a prototype.
 
-- Thai ASR currently requires replacing the Apple Speech backend with a local
-  WhisperKit model installed at `~/Library/Application Support/Subs/Models/whisperkit`.
+- Thai/Japanese ASR uses Local Whisper, but the current installed model is a
+  small development model. Production quality needs model evaluation.
+- Local Thai/Japanese -> English translation is not implemented yet.
 - Translation through Apple's Translation framework requires macOS 15 or later.
-- The app still builds and runs on macOS 14, but translation is only enabled on
-  macOS 15+.
-- Availability of on-device speech recognition depends on macOS language support
-  and installed language assets.
+- The app still builds and runs on macOS 14, but Apple Translation is only
+  enabled on macOS 15+.
 - Transcript memory is in memory only and is not persisted to disk yet.
 - The subtitle overlay is a normal utility window today. It is not yet a
   polished always-on-top, click-through caption bar.
@@ -204,5 +198,27 @@ The key technical idea:
 
 The key privacy idea:
 
-> The app chooses local-only Apple frameworks and refuses cloud fallback for
-> speech recognition.
+> The app uses local model files and local-only Apple frameworks, and refuses
+> cloud fallback for speech recognition or translation.
+
+## How to explain the backend state
+
+The easiest way to explain the current build:
+
+```text
+Built now:
+  Mac system audio capture
+  Local Whisper speech-to-text
+  Menu bar control
+  Subtitle window
+  Transcript memory
+
+Still next:
+  Local Thai/Japanese -> English translation model
+  Persistent encrypted transcript storage
+  Better subtitle overlay behavior
+```
+
+Apple Translation is not the long-term requirement. It is one possible local
+translation backend on macOS 15+. For macOS 14 and enterprise offline installs,
+the product should use a bundled local translation model instead.

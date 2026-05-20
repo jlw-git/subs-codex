@@ -45,6 +45,8 @@ Allowed backend examples:
 - whisper.cpp with local model files
 - bundled Core ML models
 - bundled local translation models
+- OPUS-MT models running in a local runtime
+- NLLB models running in a local runtime
 - local SQLite or file storage
 
 ## Disallowed architecture

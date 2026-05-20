@@ -18,6 +18,14 @@ download: false
 That means Subs does not download models while processing meeting audio and does
 not fall back to a cloud speech service.
 
+## Current development machine
+
+The development machine currently has a small WhisperKit model installed at the
+expected path. This makes the ASR stage ready to test locally.
+
+This model handles speech-to-text only. It does not translate Thai/Japanese text
+to English.
+
 ## Expected folder contents
 
 The folder should contain a WhisperKit Core ML model package, including files
