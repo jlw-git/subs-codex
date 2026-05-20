@@ -1,6 +1,6 @@
 import Foundation
 
-enum SpeechRecognitionBackendKind: String, CaseIterable, Identifiable {
+enum SpeechRecognitionBackendKind: String, CaseIterable, Hashable, Identifiable {
     case localWhisper
     case appleSpeech
 

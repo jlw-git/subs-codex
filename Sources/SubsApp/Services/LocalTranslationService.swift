@@ -20,14 +20,14 @@ final class LocalTranslationService: ObservableObject {
         backend.modelStatus(for: "ja-en")
     }
 
-    func prepare() async throws {
+    func prepare(sourceLanguage: Locale.Language, targetLanguage: Locale.Language) async throws {
         activeBackendName = backend.displayName
         translationStatus = .checking
         latestPreflightError = nil
 
         do {
             try LocalOnlyPolicy.validate(backend.declaration)
-            try await backend.prepare()
+            try await backend.prepare(sourceLanguage: sourceLanguage, targetLanguage: targetLanguage)
             translationStatus = .ready
         } catch {
             let message = error.localizedDescription
@@ -64,7 +64,7 @@ private protocol TranslationBackend {
     var displayName: String { get }
     var declaration: LocalOnlyBackendDeclaration { get }
 
-    func prepare() async throws
+    func prepare(sourceLanguage: Locale.Language, targetLanguage: Locale.Language) async throws
     func translate(_ job: TranslationJob) async throws -> String
 }
 
@@ -84,34 +84,20 @@ private final class OPUSMTTranslationBackend: TranslationBackend {
         Self.pythonExecutablePath()
     }
 
-    func prepare() async throws {
-        try validateLocalRuntime()
-        try await workerInstance().preflight(requests: [
-            Self.workerRequest(
-                command: .translate,
-                sourceText: "สวัสดี",
-                sourceLanguageCode: "th",
-                targetLanguageCode: "en",
-                modelPath: Self.modelPath(for: "th-en")
-            ),
-            Self.workerRequest(
-                command: .translate,
-                sourceText: "こんにちは",
-                sourceLanguageCode: "ja",
-                targetLanguageCode: "en",
-                modelPath: Self.modelPath(for: "ja-en")
-            )
-        ])
+    func prepare(sourceLanguage: Locale.Language, targetLanguage: Locale.Language) async throws {
+        let request = try warmupRequest(sourceLanguage: sourceLanguage, targetLanguage: targetLanguage)
+        try validateLocalRuntime(for: request.languagePair)
+        try await workerInstance().preflight(requests: [request.workerRequest])
     }
 
     func translate(_ job: TranslationJob) async throws -> String {
         let sourceLanguageCode = Self.languageCode(for: job.sourceLanguage)
         let targetLanguageCode = Self.languageCode(for: job.targetLanguage)
-        let languagePair = "\(sourceLanguageCode)-\(targetLanguageCode)"
-
-        guard ["th-en", "ja-en"].contains(languagePair) else {
-            throw LocalTranslationError.unsupportedLanguagePair(languagePair)
-        }
+        let languagePair = try Self.supportedLanguagePair(
+            sourceLanguageCode: sourceLanguageCode,
+            targetLanguageCode: targetLanguageCode
+        )
+        try validateLocalRuntime(for: languagePair)
 
         let response = try await workerInstance().send(Self.workerRequest(
             command: .translate,
@@ -134,6 +120,34 @@ private final class OPUSMTTranslationBackend: TranslationBackend {
         return FileManager.default.fileExists(atPath: path) ? "Installed" : "Missing"
     }
 
+    private func warmupRequest(
+        sourceLanguage: Locale.Language,
+        targetLanguage: Locale.Language
+    ) throws -> (languagePair: String, workerRequest: OPUSMTWorkerRequest) {
+        let sourceLanguageCode = Self.languageCode(for: sourceLanguage)
+        let targetLanguageCode = Self.languageCode(for: targetLanguage)
+        let languagePair = try Self.supportedLanguagePair(
+            sourceLanguageCode: sourceLanguageCode,
+            targetLanguageCode: targetLanguageCode
+        )
+        let sampleText = switch languagePair {
+        case "ja-en": "こんにちは"
+        case "th-en": "สวัสดี"
+        default: ""
+        }
+
+        return (
+            languagePair,
+            Self.workerRequest(
+                command: .translate,
+                sourceText: sampleText,
+                sourceLanguageCode: sourceLanguageCode,
+                targetLanguageCode: targetLanguageCode,
+                modelPath: Self.modelPath(for: languagePair)
+            )
+        )
+    }
+
     private func workerInstance() throws -> OPUSMTWorker {
         if let worker {
             return worker
@@ -151,18 +165,27 @@ private final class OPUSMTTranslationBackend: TranslationBackend {
         return worker
     }
 
-    private func validateLocalRuntime() throws {
+    private func validateLocalRuntime(for languagePair: String) throws {
         let pythonPath = Self.pythonExecutablePath()
         guard FileManager.default.isExecutableFile(atPath: pythonPath) else {
             throw LocalTranslationError.runtimeMissing(pythonPath)
         }
 
-        for languagePair in ["th-en", "ja-en"] {
-            let modelPath = Self.modelPath(for: languagePair)
-            guard FileManager.default.fileExists(atPath: modelPath) else {
-                throw LocalTranslationError.modelMissing(languagePair: languagePair, path: modelPath)
-            }
+        let modelPath = Self.modelPath(for: languagePair)
+        guard FileManager.default.fileExists(atPath: modelPath) else {
+            throw LocalTranslationError.modelMissing(languagePair: languagePair, path: modelPath)
         }
+    }
+
+    private static func supportedLanguagePair(
+        sourceLanguageCode: String,
+        targetLanguageCode: String
+    ) throws -> String {
+        let languagePair = "\(sourceLanguageCode)-\(targetLanguageCode)"
+        guard ["th-en", "ja-en"].contains(languagePair) else {
+            throw LocalTranslationError.unsupportedLanguagePair(languagePair)
+        }
+        return languagePair
     }
 
     private static func workerRequest(

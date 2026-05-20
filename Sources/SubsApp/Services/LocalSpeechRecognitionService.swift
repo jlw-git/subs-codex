@@ -10,6 +10,7 @@ final class LocalSpeechRecognitionService: ObservableObject {
     @Published private(set) var activeBackendName = SpeechRecognitionBackendKind.localWhisper.title
 
     private var activeBackend: SpeechRecognitionBackend?
+    private var cachedBackends: [SpeechRecognitionBackendKind: SpeechRecognitionBackend] = [:]
 
     func start(
         language: String,
@@ -19,7 +20,7 @@ final class LocalSpeechRecognitionService: ObservableObject {
         stop()
         state = .requestingPermission
 
-        let backend = Self.makeBackend(kind: backendKind)
+        let backend = backend(kind: backendKind)
         activeBackend = backend
         activeBackendName = backend.displayName
 
@@ -51,6 +52,16 @@ final class LocalSpeechRecognitionService: ObservableObject {
         activeBackend = nil
         latestTranscript = "Waiting for local audio..."
         state = .idle
+    }
+
+    private func backend(kind: SpeechRecognitionBackendKind) -> SpeechRecognitionBackend {
+        if let backend = cachedBackends[kind] {
+            return backend
+        }
+
+        let backend = Self.makeBackend(kind: kind)
+        cachedBackends[kind] = backend
+        return backend
     }
 
     private static func makeBackend(kind: SpeechRecognitionBackendKind) -> SpeechRecognitionBackend {
@@ -89,6 +100,8 @@ private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBacke
     private var whisperKit: WhisperKit?
     private var samples: [Float] = []
     private var isTranscribing = false
+    private var sessionGeneration = 0
+    private var transcribeTask: Task<Void, Never>?
     private var languageCode = "th"
     private var onRecognition: ((String, Bool) -> Void)?
     private var onStateChange: ((CaptureState) -> Void)?
@@ -100,26 +113,31 @@ private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBacke
     ) async {
         self.onRecognition = onRecognition
         self.onStateChange = onStateChange
+        sessionGeneration += 1
         languageCode = Self.languageCode(for: language)
         samples.removeAll(keepingCapacity: true)
         isTranscribing = false
-
-        guard let modelFolder = Self.localModelFolder(), FileManager.default.fileExists(atPath: modelFolder) else {
-            onStateChange(.failed("""
-            Local Whisper ASR is selected for \(language), but no local Whisper model folder was found. Install a WhisperKit Core ML model at ~/Library/Application Support/Subs/Models/whisperkit and retry. Subs stopped here instead of using a cloud fallback.
-            """))
-            return
-        }
+        transcribeTask?.cancel()
 
         do {
-            let config = WhisperKitConfig(
-                modelFolder: modelFolder,
-                verbose: false,
-                prewarm: false,
-                load: true,
-                download: false
-            )
-            whisperKit = try await WhisperKit(config)
+            if whisperKit == nil {
+                guard let modelFolder = Self.localModelFolder(), FileManager.default.fileExists(atPath: modelFolder) else {
+                    onStateChange(.failed("""
+                    Local Whisper ASR is selected for \(language), but no local Whisper model folder was found. Install a WhisperKit Core ML model at ~/Library/Application Support/Subs/Models/whisperkit and retry. Subs stopped here instead of using a cloud fallback.
+                    """))
+                    return
+                }
+
+                let config = WhisperKitConfig(
+                    modelFolder: modelFolder,
+                    verbose: false,
+                    prewarm: false,
+                    load: true,
+                    download: false
+                )
+                whisperKit = try await WhisperKit(config)
+            }
+
             onStateChange(.running)
         } catch {
             onStateChange(.failed("Local Whisper ASR could not load the local model folder: \(error.localizedDescription). Subs did not use a cloud fallback."))
@@ -134,23 +152,31 @@ private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBacke
         let chunk = samples
         samples.removeAll(keepingCapacity: true)
         isTranscribing = true
+        let generation = sessionGeneration
 
-        Task { @MainActor [weak self] in
-            await self?.transcribe(chunk)
+        transcribeTask = Task { @MainActor [weak self] in
+            await self?.transcribe(chunk, generation: generation)
         }
     }
 
     func stop() {
-        whisperKit = nil
+        sessionGeneration += 1
+        transcribeTask?.cancel()
+        transcribeTask = nil
         samples.removeAll(keepingCapacity: true)
         isTranscribing = false
         onRecognition = nil
         onStateChange = nil
     }
 
-    private func transcribe(_ audioSamples: [Float]) async {
-        defer { isTranscribing = false }
+    private func transcribe(_ audioSamples: [Float], generation: Int) async {
+        defer {
+            if generation == sessionGeneration {
+                isTranscribing = false
+            }
+        }
 
+        guard generation == sessionGeneration, !Task.isCancelled else { return }
         guard let whisperKit else { return }
 
         do {
@@ -167,9 +193,10 @@ private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBacke
             let transcript = TranscriptionUtilities.mergeTranscriptionResults(results).text
                 .trimmingCharacters(in: .whitespacesAndNewlines)
 
-            guard !transcript.isEmpty else { return }
+            guard generation == sessionGeneration, !Task.isCancelled, !transcript.isEmpty else { return }
             onRecognition?(transcript, true)
         } catch {
+            guard generation == sessionGeneration, !Task.isCancelled else { return }
             onStateChange?(.failed("Local Whisper ASR failed while transcribing locally: \(error.localizedDescription). Subs did not use a cloud fallback."))
         }
     }

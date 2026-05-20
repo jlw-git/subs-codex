@@ -15,6 +15,7 @@ final class MeetingSessionStore: ObservableObject {
     let speech = LocalSpeechRecognitionService()
     let translation = LocalTranslationService()
     private var lastFinalTranscript = ""
+    private var translationWarmupTask: Task<Void, Never>?
     private var translationTask: Task<Void, Never>?
 
     var isRunning: Bool {
@@ -52,18 +53,10 @@ final class MeetingSessionStore: ObservableObject {
     func startCapture() async {
         sessionState = .starting
         currentSourceSubtitle = "Starting local \(speechBackend.title) ASR..."
-        currentTranslatedSubtitle = "Checking local-only runtime and model files."
+        currentTranslatedSubtitle = "Local translation will warm after capture starts."
         pendingTranslation = nil
+        translationWarmupTask?.cancel()
         translationTask?.cancel()
-
-        do {
-            try await translation.prepare()
-        } catch {
-            sessionState = .failed(error.localizedDescription)
-            currentSourceSubtitle = "Local translation is not ready."
-            currentTranslatedSubtitle = error.localizedDescription
-            return
-        }
 
         capture.onAudioBuffer = { [weak self] buffer in
             self?.speech.append(buffer)
@@ -89,6 +82,7 @@ final class MeetingSessionStore: ObservableObject {
             currentTranslatedSubtitle = capture.state.failureMessage ?? "Check macOS audio capture permissions."
         } else {
             sessionState = .running
+            warmTranslation(sourceLanguage: sourceLanguage, targetLanguage: targetLanguage)
         }
     }
 
@@ -96,6 +90,7 @@ final class MeetingSessionStore: ObservableObject {
         speech.stop()
         capture.onAudioBuffer = nil
         await capture.stop()
+        translationWarmupTask?.cancel()
         translationTask?.cancel()
         sessionState = .idle
     }
@@ -106,6 +101,7 @@ final class MeetingSessionStore: ObservableObject {
         currentSourceSubtitle = "Waiting for local audio..."
         currentTranslatedSubtitle = ""
         pendingTranslation = nil
+        translationWarmupTask?.cancel()
         translationTask?.cancel()
     }
 
@@ -151,6 +147,27 @@ final class MeetingSessionStore: ObservableObject {
             } catch {
                 guard !Task.isCancelled else { return }
                 translationFailed(error, for: job)
+            }
+        }
+    }
+
+    private func warmTranslation(sourceLanguage: String, targetLanguage: String) {
+        translationWarmupTask?.cancel()
+        let source = Self.localeLanguage(for: sourceLanguage)
+        let target = Self.localeLanguage(for: targetLanguage)
+
+        translationWarmupTask = Task { [weak self] in
+            guard let self else { return }
+
+            do {
+                try await translation.prepare(sourceLanguage: source, targetLanguage: target)
+                guard !Task.isCancelled else { return }
+                if pendingTranslation == nil {
+                    currentTranslatedSubtitle = "Local translation ready."
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                currentTranslatedSubtitle = "Local translation unavailable: \(error.localizedDescription)"
             }
         }
     }
