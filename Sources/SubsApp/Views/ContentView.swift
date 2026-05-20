@@ -22,8 +22,9 @@ struct ContentView: View {
                 Button {
                     Task { await store.toggleCapture() }
                 } label: {
-                    Label(store.isRunning ? "Stop" : "Start", systemImage: store.isRunning ? "stop.fill" : "play.fill")
+                    Label(store.primaryActionTitle, systemImage: store.primaryActionSystemImage)
                 }
+                .disabled(store.isStarting)
                 .help(store.isRunning ? "Stop local capture" : "Start local capture")
             }
 

@@ -2,6 +2,7 @@ import Foundation
 
 enum CaptureState: Equatable {
     case idle
+    case starting
     case requestingPermission
     case running
     case failed(String)
@@ -9,10 +10,19 @@ enum CaptureState: Equatable {
     var title: String {
         switch self {
         case .idle: "Idle"
+        case .starting: "Starting"
         case .requestingPermission: "Requesting Permission"
         case .running: "Capturing Locally"
         case .failed: "Needs Attention"
         }
+    }
+
+    var failureMessage: String? {
+        if case .failed(let message) = self {
+            return message
+        }
+
+        return nil
     }
 }
 

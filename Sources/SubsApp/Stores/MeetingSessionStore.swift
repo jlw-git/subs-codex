@@ -5,6 +5,7 @@ final class MeetingSessionStore: ObservableObject {
     @Published var sourceLanguage = "Thai"
     @Published var targetLanguage = "English"
     @Published var speechBackend: SpeechRecognitionBackendKind = .localWhisper
+    @Published private(set) var sessionState: CaptureState = .idle
     @Published private(set) var segments: [TranscriptSegment] = []
     @Published private(set) var currentSourceSubtitle = "Waiting for local audio..."
     @Published private(set) var currentTranslatedSubtitle = ""
@@ -24,11 +25,40 @@ final class MeetingSessionStore: ObservableObject {
         capture.state == .running
     }
 
+    var isStarting: Bool {
+        sessionState == .starting || speech.state == .requestingPermission || capture.state == .requestingPermission
+    }
+
+    var primaryActionTitle: String {
+        if isRunning { return "Stop" }
+        if isStarting { return "Starting" }
+        return "Start"
+    }
+
+    var primaryActionSystemImage: String {
+        if isRunning { return "stop.fill" }
+        if isStarting { return "hourglass" }
+        return "play.fill"
+    }
+
+    var statusTitle: String {
+        if isRunning { return capture.state.title }
+        if isStarting { return "Starting Local Pipeline" }
+        if speech.state.failureMessage != nil || capture.state.failureMessage != nil { return "Needs Attention" }
+        return sessionState.title
+    }
+
     func toggleCapture() async {
+        guard !isStarting else { return }
         isRunning ? await stopCapture() : await startCapture()
     }
 
     func startCapture() async {
+        sessionState = .starting
+        currentSourceSubtitle = "Starting local \(speechBackend.title) ASR..."
+        currentTranslatedSubtitle = "Checking local-only runtime and model files."
+        pendingTranslation = nil
+
         capture.onAudioBuffer = { [weak self] buffer in
             self?.speech.append(buffer)
         }
@@ -37,11 +67,22 @@ final class MeetingSessionStore: ObservableObject {
             self?.handleRecognition(text, isFinal: isFinal)
         }
 
-        guard speech.state == .running else { return }
+        guard speech.state == .running else {
+            sessionState = .failed(speech.state.failureMessage ?? "Local speech recognition did not start.")
+            currentSourceSubtitle = "Local ASR is not ready."
+            currentTranslatedSubtitle = speech.state.failureMessage ?? "Check the selected local ASR backend."
+            capture.onAudioBuffer = nil
+            return
+        }
 
         await capture.start()
         if capture.state != .running {
             speech.stop()
+            sessionState = .failed(capture.state.failureMessage ?? "Local audio capture did not start.")
+            currentSourceSubtitle = "Local audio capture is not ready."
+            currentTranslatedSubtitle = capture.state.failureMessage ?? "Check macOS audio capture permissions."
+        } else {
+            sessionState = .running
         }
     }
 
@@ -49,6 +90,7 @@ final class MeetingSessionStore: ObservableObject {
         speech.stop()
         capture.onAudioBuffer = nil
         await capture.stop()
+        sessionState = .idle
     }
 
     func clearTranscript() {

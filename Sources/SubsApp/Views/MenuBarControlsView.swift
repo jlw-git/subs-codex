@@ -17,8 +17,9 @@ struct MenuBarControlsView: View {
             Button {
                 Task { await store.toggleCapture() }
             } label: {
-                Label(store.isRunning ? "Stop Capture" : "Start Capture", systemImage: store.isRunning ? "stop.fill" : "play.fill")
+                Label(store.isRunning ? "Stop Capture" : store.primaryActionTitle, systemImage: store.primaryActionSystemImage)
             }
+            .disabled(store.isStarting)
             .keyboardShortcut("r", modifiers: [.command, .shift])
 
             Button {
@@ -79,7 +80,7 @@ private struct StatusHeaderView: View {
                 .foregroundStyle(store.isRunning ? .green : .secondary)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(store.capture.state.title)
+                Text(store.statusTitle)
                     .font(.headline)
 
                 Text("\(store.sourceLanguage) -> \(store.targetLanguage)")

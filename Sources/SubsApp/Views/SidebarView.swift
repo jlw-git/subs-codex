@@ -6,7 +6,7 @@ struct SidebarView: View {
     var body: some View {
         List {
             Section("Session") {
-                Label(store.capture.state.title, systemImage: stateIcon)
+                Label(store.statusTitle, systemImage: stateIcon)
                 Label("No cloud transport", systemImage: "network.slash")
                 Label("\(store.segments.count) transcript lines", systemImage: "text.alignleft")
             }
@@ -35,6 +35,7 @@ struct SidebarView: View {
     private var stateIcon: String {
         switch store.capture.state {
         case .idle: "pause.circle"
+        case .starting: "hourglass"
         case .requestingPermission: "lock.open"
         case .running: "waveform"
         case .failed: "exclamationmark.triangle"

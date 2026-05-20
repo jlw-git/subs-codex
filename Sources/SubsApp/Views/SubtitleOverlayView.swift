@@ -6,7 +6,7 @@ struct SubtitleOverlayView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label(store.isRunning ? "Live" : "Ready", systemImage: store.isRunning ? "waveform" : "captions.bubble")
+                Label(store.isRunning ? "Live" : store.statusTitle, systemImage: store.isRunning ? "waveform" : store.primaryActionSystemImage)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(store.isRunning ? .green : .secondary)
 
