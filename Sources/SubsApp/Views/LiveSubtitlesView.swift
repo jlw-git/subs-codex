@@ -17,9 +17,17 @@ struct LiveSubtitlesView: View {
 
                 Text(store.currentSourceSubtitle)
                     .font(.system(size: 34, weight: .semibold, design: .rounded))
+                    .italic(store.isCurrentSourceSubtitleCandidate)
+                    .foregroundStyle(store.isCurrentSourceSubtitleCandidate ? .secondary : .primary)
                     .lineLimit(3)
                     .minimumScaleFactor(0.7)
                     .frame(maxWidth: .infinity, alignment: .leading)
+
+                if store.isCurrentSourceSubtitleCandidate {
+                    Label("Candidate", systemImage: "waveform.badge.magnifyingglass")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
 
                 Text(store.currentTranslatedSubtitle.isEmpty ? "Translation will appear here." : store.currentTranslatedSubtitle)
                     .font(.system(size: 26, weight: .medium, design: .rounded))
@@ -29,6 +37,8 @@ struct LiveSubtitlesView: View {
             }
             .padding(22)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+
+            RecognitionDebugPanel(metrics: store.speech.debugMetrics)
 
             if case .failed(let message) = store.capture.state {
                 Text(message)
@@ -52,6 +62,52 @@ struct LiveSubtitlesView: View {
         }
         .padding(20)
         .navigationTitle("Live")
+    }
+}
+
+private struct RecognitionDebugPanel: View {
+    let metrics: RecognitionDebugMetrics
+
+    private let columns = [
+        GridItem(.adaptive(minimum: 132), spacing: 10, alignment: .leading)
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Recognition Debug", systemImage: "waveform.path.ecg")
+                .font(.headline)
+
+            LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
+                DebugMetric(title: "RMS", value: String(format: "%.4f", metrics.latestRMS))
+                DebugMetric(title: "Skipped", value: metrics.skippedQuietChunks.formatted())
+                DebugMetric(title: "Low confidence", value: metrics.filteredLowConfidenceChunks.formatted())
+                DebugMetric(title: "Duplicates", value: metrics.filteredDuplicateChunks.formatted())
+                DebugMetric(title: "Candidates", value: metrics.candidateChunks.formatted())
+                DebugMetric(title: "Accepted", value: metrics.acceptedChunks.formatted())
+            }
+        }
+        .padding(16)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct DebugMetric: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Text(value)
+                .font(.system(.title3, design: .rounded).weight(.semibold))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

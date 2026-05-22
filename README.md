@@ -13,6 +13,14 @@ The current product focus is:
 - a floating subtitle window
 - a local bilingual transcript window
 
+The current next-build order is documented in
+`docs/NEXT_BUILD_ORDER.md`. The current milestone is a trust build: the app now
+records local, no-text reliability reports for capture sessions, and the next
+step is to run the realistic call test matrix, fix the biggest trust breakers,
+expand translation evaluation, surface setup readiness, and then polish the
+subtitle overlay. Transcript persistence and diarization are intentionally
+deferred until live subtitles are stable enough for real meeting use.
+
 ## Current backend status
 
 The current code is moving toward a fully bundled local model stack:
@@ -81,6 +89,9 @@ The local privacy story is enforced in code:
 - Local translation uses the bundled OPUS-MT runner script with locally
   installed model folders. Runtime warmup and translation load only the selected
   local language-pair folder.
+- Reliability diagnostics write local JSON/Markdown reports with timings,
+  counters, and local error messages only. They must not include audio,
+  transcript text, translated text, or meeting-derived content.
 - The app does not include any cloud API client.
 - Transcript memory is currently in app memory only.
 
@@ -101,6 +112,8 @@ Subs has three main surfaces:
   translation during a call.
 - **Transcript window**: larger view that shows bilingual transcript lines with
   timestamps.
+- **Settings**: privacy/runtime status and latest local reliability report
+  summary.
 
 The menu bar is the daily control surface. The windows are there when the user
 needs more space.
@@ -119,6 +132,8 @@ The app is a SwiftPM macOS app.
 - `Sources/SubsApp/Services/LocalSpeechRecognitionService.swift`: on-device
   speech recognition orchestration, backend selection, Apple Speech backend, and
   local WhisperKit backend.
+- `Sources/SubsApp/Services/ReliabilitySessionRecorder.swift`: local no-text
+  reliability report recorder for trust-build call testing.
 - `Sources/SubsApp/Models/SpeechRecognitionBackendKind.swift`: available ASR
   backend choices.
 - `Sources/SubsApp/Models/TranscriptModels.swift`: transcript and translation
@@ -130,6 +145,8 @@ The app is a SwiftPM macOS app.
 - `Sources/SubsApp/Views/SidebarView.swift`: session status and language
   controls in the main window.
 - `Sources/SubsApp/Views/SettingsView.swift`: privacy/runtime settings display.
+- `Tests/SubsAppTests/ReliabilitySessionRecorderTests.swift`: focused tests for
+  reliability report privacy, timing aggregation, and failure finalization.
 - `script/build_and_run.sh`: builds, stages, and launches the macOS app bundle.
 - `script/evaluate_translation.py`: runs local OPUS-MT text translation quality
   checks against synthetic fixtures.
@@ -138,6 +155,10 @@ The app is a SwiftPM macOS app.
 - `.codex/environments/environment.toml`: gives Codex a Run action.
 - `docs/LOCAL_ONLY_ARCHITECTURE.md`: non-negotiable no-cloud architecture
   policy for future backend changes.
+- `docs/NEXT_BUILD_ORDER.md`: canonical product priority order for the next
+  builds.
+- `docs/TRUST_BUILD_TEST_PLAN.md`: manual trust-build test matrix and pass/fail
+  rubric for realistic call testing.
 - `docs/LOCAL_WHISPER_MODEL_SETUP.md`: where local WhisperKit model files must
   be installed for the `Local Whisper` backend.
 - `docs/LOCAL_TRANSLATION_MODEL_OPTIONS.md`: local translation model options for
@@ -301,6 +322,7 @@ and Speech Recognition permission.
 The source tree is intentionally small:
 
 - `Sources/` contains the app code.
+- `Tests/` contains focused SwiftPM tests.
 - `docs/` contains architecture notes.
 - `script/` contains the build/run helper.
 - `.codex/` contains the Codex Run action.
@@ -311,9 +333,12 @@ Generated folders are ignored by git:
 - `dist/`: staged `.app` bundle created by `script/build_and_run.sh`.
 - `.venv-opus/`: optional development-only Python venv.
 - `eval/reports/`: generated local translation eval reports.
+- `~/Library/Application Support/Subs/ReliabilityReports/`: generated local
+  trust-build reliability reports. These are outside the repo and should remain
+  local diagnostic artifacts.
 
-Both folders can be deleted and regenerated. Deleting `.build/` saves space but
-means the next build will re-fetch and recompile dependencies.
+Generated folders can be deleted and regenerated. Deleting `.build/` saves space
+but means the next build will re-fetch and recompile dependencies.
 
 ## How to explain it
 
@@ -346,10 +371,14 @@ Built now:
   Menu bar control
   Subtitle window
   Transcript memory
+  Local no-text reliability reports
 
 Still next:
-  Persistent encrypted transcript storage
-  Better subtitle overlay behavior
+  1. Run the end-to-end trust-build call matrix and fix top trust breakers
+  2. Expanded Thai/Japanese translation eval
+  3. Setup/readiness checklist
+  4. Subtitle overlay polish
+  5. Later: persistent encrypted transcript storage and diarization
 ```
 
 Apple Translation is no longer part of the realtime translation path. The

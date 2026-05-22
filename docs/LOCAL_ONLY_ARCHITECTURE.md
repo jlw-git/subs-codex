@@ -47,6 +47,8 @@ Allowed backend examples:
 - OPUS-MT models running in a local runtime
 - NLLB models running in a local runtime
 - local SQLite or file storage
+- local reliability reports that contain only timings, counters, backend names,
+  and local error messages
 
 ## Disallowed architecture
 
@@ -57,6 +59,8 @@ Do not add:
 - cloud LLM summary APIs
 - remote embeddings APIs
 - remote logging of transcript/audio snippets
+- local or remote diagnostic reports that include meeting audio, source text,
+  translated text, transcript memory, or meeting-derived content
 - silent network fallback when a local model is unavailable
 
 If a local model is missing or unsupported, the app must show a local
@@ -94,6 +98,31 @@ When local processing is unavailable:
 - do not ask the user to enable a cloud fallback
 
 The privacy promise is more important than producing a transcript at all costs.
+
+## Diagnostics and reliability reports
+
+Local diagnostics are allowed only when they preserve the same privacy boundary
+as the realtime pipeline. Reliability reports may record:
+
+- timestamps and elapsed timings
+- selected local backend names
+- source and target language labels
+- recognition counters such as candidate, accepted, duplicate, quiet-skip, and
+  low-confidence counts
+- translation attempt, success, failure, and latency counts
+- local setup or runtime error messages
+
+Reliability reports must not record:
+
+- raw audio or processed audio features
+- partial or final transcript text
+- source-language text
+- translated text
+- speaker labels derived from meeting content
+- meeting summaries, action items, decisions, or other meeting-derived metadata
+
+Generated reliability reports should stay on the user's Mac, under local app
+support storage, unless the user explicitly chooses to share a redacted report.
 
 ## Future architecture note
 

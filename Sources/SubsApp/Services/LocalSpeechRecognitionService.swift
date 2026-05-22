@@ -1,13 +1,40 @@
 import AVFoundation
 import Foundation
+import OSLog
 import Speech
 import WhisperKit
+
+private let speechLogger = Logger(
+    subsystem: Bundle.main.bundleIdentifier ?? "com.jlwong.Subs",
+    category: "Speech"
+)
+
+enum SpeechRecognitionResultKind: Equatable {
+    case accepted
+    case candidate
+}
+
+struct SpeechRecognitionResult: Equatable {
+    let text: String
+    let kind: SpeechRecognitionResultKind
+    let isFinal: Bool
+}
+
+struct RecognitionDebugMetrics: Equatable {
+    var latestRMS: Double = 0
+    var skippedQuietChunks: Int = 0
+    var filteredLowConfidenceChunks: Int = 0
+    var filteredDuplicateChunks: Int = 0
+    var candidateChunks: Int = 0
+    var acceptedChunks: Int = 0
+}
 
 @MainActor
 final class LocalSpeechRecognitionService: ObservableObject {
     @Published private(set) var state: CaptureState = .idle
     @Published private(set) var latestTranscript = "Waiting for local audio..."
     @Published private(set) var activeBackendName = SpeechRecognitionBackendKind.localWhisper.title
+    @Published private(set) var debugMetrics = RecognitionDebugMetrics()
 
     private var activeBackend: SpeechRecognitionBackend?
     private var cachedBackends: [SpeechRecognitionBackendKind: SpeechRecognitionBackend] = [:]
@@ -15,10 +42,11 @@ final class LocalSpeechRecognitionService: ObservableObject {
     func start(
         language: String,
         backendKind: SpeechRecognitionBackendKind,
-        onRecognition: @escaping (String, Bool) -> Void
+        onRecognition: @escaping (SpeechRecognitionResult) -> Void
     ) async {
         stop()
         state = .requestingPermission
+        debugMetrics = RecognitionDebugMetrics()
 
         let backend = backend(kind: backendKind)
         activeBackend = backend
@@ -33,12 +61,15 @@ final class LocalSpeechRecognitionService: ObservableObject {
 
         await backend.start(
             language: language,
-            onRecognition: { [weak self] text, isFinal in
-                self?.latestTranscript = text
-                onRecognition(text, isFinal)
+            onRecognition: { [weak self] result in
+                self?.latestTranscript = result.text
+                onRecognition(result)
             },
             onStateChange: { [weak self] state in
                 self?.state = state
+            },
+            onDebugMetricsChange: { [weak self] metrics in
+                self?.debugMetrics = metrics
             }
         )
     }
@@ -51,6 +82,7 @@ final class LocalSpeechRecognitionService: ObservableObject {
         activeBackend?.stop()
         activeBackend = nil
         latestTranscript = "Waiting for local audio..."
+        debugMetrics = RecognitionDebugMetrics()
         state = .idle
     }
 
@@ -79,8 +111,9 @@ private protocol SpeechRecognitionBackend {
 
     func start(
         language: String,
-        onRecognition: @escaping (String, Bool) -> Void,
-        onStateChange: @escaping (CaptureState) -> Void
+        onRecognition: @escaping (SpeechRecognitionResult) -> Void,
+        onStateChange: @escaping (CaptureState) -> Void,
+        onDebugMetricsChange: @escaping (RecognitionDebugMetrics) -> Void
     ) async
     func append(_ buffer: AVAudioPCMBuffer)
     func stop()
@@ -96,32 +129,45 @@ private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBacke
         allowsCloudFallback: false
     )
 
-    private let chunkSampleCount = WhisperKit.sampleRate * 5
+    private let decodeWindowSampleCount = WhisperKit.sampleRate * 8
+    private let overlapSampleCount = WhisperKit.sampleRate * 2
+    private let minimumChunkRMS = 0.002
+    private let overlapDurationSeconds: Float = 2
     private var whisperKit: WhisperKit?
     private var samples: [Float] = []
     private var isTranscribing = false
     private var sessionGeneration = 0
+    private var windowSequence = 0
     private var transcribeTask: Task<Void, Never>?
     private var languageCode = "th"
-    private var onRecognition: ((String, Bool) -> Void)?
+    private var lastAcceptedTranscript = ""
+    private var debugMetrics = RecognitionDebugMetrics()
+    private var onRecognition: ((SpeechRecognitionResult) -> Void)?
     private var onStateChange: ((CaptureState) -> Void)?
+    private var onDebugMetricsChange: ((RecognitionDebugMetrics) -> Void)?
 
     func start(
         language: String,
-        onRecognition: @escaping (String, Bool) -> Void,
-        onStateChange: @escaping (CaptureState) -> Void
+        onRecognition: @escaping (SpeechRecognitionResult) -> Void,
+        onStateChange: @escaping (CaptureState) -> Void,
+        onDebugMetricsChange: @escaping (RecognitionDebugMetrics) -> Void
     ) async {
         self.onRecognition = onRecognition
         self.onStateChange = onStateChange
+        self.onDebugMetricsChange = onDebugMetricsChange
         sessionGeneration += 1
+        windowSequence = 0
         languageCode = Self.languageCode(for: language)
         samples.removeAll(keepingCapacity: true)
         isTranscribing = false
+        lastAcceptedTranscript = ""
+        resetDebugMetrics()
         transcribeTask?.cancel()
 
         do {
             if whisperKit == nil {
                 guard let modelFolder = Self.localModelFolder(), FileManager.default.fileExists(atPath: modelFolder) else {
+                    speechLogger.error("Local Whisper model folder is missing")
                     onStateChange(.failed("""
                     Local Whisper ASR is selected for \(language), but no local Whisper model folder was found. Install a WhisperKit Core ML model at ~/Library/Application Support/Subs/Models/whisperkit and retry. Subs stopped here instead of using a cloud fallback.
                     """))
@@ -135,11 +181,16 @@ private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBacke
                     load: true,
                     download: false
                 )
+                speechLogger.info("Loading local WhisperKit model")
                 whisperKit = try await WhisperKit(config)
+                speechLogger.info("Local WhisperKit model loaded")
+            } else {
+                speechLogger.info("Reusing warm local WhisperKit model")
             }
 
             onStateChange(.running)
         } catch {
+            speechLogger.error("Local Whisper ASR failed to load: \(error.localizedDescription, privacy: .public)")
             onStateChange(.failed("Local Whisper ASR could not load the local model folder: \(error.localizedDescription). Subs did not use a cloud fallback."))
         }
     }
@@ -148,14 +199,17 @@ private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBacke
         guard whisperKit != nil, let convertedSamples = Self.convertToWhisperSamples(buffer) else { return }
         samples.append(contentsOf: convertedSamples)
 
-        guard samples.count >= chunkSampleCount, !isTranscribing else { return }
-        let chunk = samples
-        samples.removeAll(keepingCapacity: true)
+        guard samples.count >= decodeWindowSampleCount, !isTranscribing else { return }
+        let chunk = Array(samples.prefix(decodeWindowSampleCount))
+        let advanceSampleCount = decodeWindowSampleCount - overlapSampleCount
+        samples.removeFirst(min(samples.count, advanceSampleCount))
         isTranscribing = true
+        windowSequence += 1
+        let windowIndex = windowSequence
         let generation = sessionGeneration
 
         transcribeTask = Task { @MainActor [weak self] in
-            await self?.transcribe(chunk, generation: generation)
+            await self?.transcribe(chunk, generation: generation, windowIndex: windowIndex)
         }
     }
 
@@ -165,11 +219,15 @@ private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBacke
         transcribeTask = nil
         samples.removeAll(keepingCapacity: true)
         isTranscribing = false
+        windowSequence = 0
+        lastAcceptedTranscript = ""
+        resetDebugMetrics()
         onRecognition = nil
         onStateChange = nil
+        onDebugMetricsChange = nil
     }
 
-    private func transcribe(_ audioSamples: [Float], generation: Int) async {
+    private func transcribe(_ audioSamples: [Float], generation: Int, windowIndex: Int) async {
         defer {
             if generation == sessionGeneration {
                 isTranscribing = false
@@ -178,6 +236,13 @@ private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBacke
 
         guard generation == sessionGeneration, !Task.isCancelled else { return }
         guard let whisperKit else { return }
+        let rms = Self.rmsLevel(for: audioSamples)
+        updateDebugMetrics { $0.latestRMS = rms }
+        guard rms >= minimumChunkRMS else {
+            updateDebugMetrics { $0.skippedQuietChunks += 1 }
+            speechLogger.info("Skipping quiet audio chunk, rms: \(rms, privacy: .public)")
+            return
+        }
 
         do {
             let options = DecodingOptions(
@@ -186,19 +251,70 @@ private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBacke
                 temperature: 0,
                 usePrefillPrompt: true,
                 skipSpecialTokens: true,
-                withoutTimestamps: true,
+                withoutTimestamps: false,
                 wordTimestamps: false
             )
             let results = try await whisperKit.transcribe(audioArray: audioSamples, decodeOptions: options)
-            let transcript = TranscriptionUtilities.mergeTranscriptionResults(results).text
+            let mergedResult = TranscriptionUtilities.mergeTranscriptionResults(results)
+            let transcript = mergedResult.text
                 .trimmingCharacters(in: .whitespacesAndNewlines)
 
             guard generation == sessionGeneration, !Task.isCancelled, !transcript.isEmpty else { return }
-            onRecognition?(transcript, true)
+            let segments = mergedResult.segments
+            guard Self.isReliableTranscript(transcript, segments: segments) else {
+                updateDebugMetrics {
+                    $0.filteredLowConfidenceChunks += 1
+                    $0.candidateChunks += 1
+                }
+                speechLogger.info("Filtered low-confidence local Whisper transcript: \(transcript, privacy: .public)")
+                onRecognition?(
+                    SpeechRecognitionResult(
+                        text: transcript,
+                        kind: .candidate,
+                        isFinal: false
+                    )
+                )
+                return
+            }
+            let acceptedTranscript = Self.acceptedTranscript(
+                from: transcript,
+                segments: segments,
+                trimLeadingOverlap: windowIndex > 1,
+                overlapDurationSeconds: overlapDurationSeconds
+            )
+            guard !acceptedTranscript.isEmpty else {
+                updateDebugMetrics { $0.filteredDuplicateChunks += 1 }
+                speechLogger.info("Filtered overlap-only local Whisper transcript: \(transcript, privacy: .public)")
+                return
+            }
+            guard !Self.isDuplicate(acceptedTranscript, previous: lastAcceptedTranscript) else {
+                updateDebugMetrics { $0.filteredDuplicateChunks += 1 }
+                speechLogger.info("Filtered duplicate local Whisper transcript: \(acceptedTranscript, privacy: .public)")
+                return
+            }
+            lastAcceptedTranscript = acceptedTranscript
+            updateDebugMetrics { $0.acceptedChunks += 1 }
+            onRecognition?(
+                SpeechRecognitionResult(
+                    text: acceptedTranscript,
+                    kind: .accepted,
+                    isFinal: true
+                )
+            )
         } catch {
             guard generation == sessionGeneration, !Task.isCancelled else { return }
             onStateChange?(.failed("Local Whisper ASR failed while transcribing locally: \(error.localizedDescription). Subs did not use a cloud fallback."))
         }
+    }
+
+    private func resetDebugMetrics() {
+        debugMetrics = RecognitionDebugMetrics()
+        onDebugMetricsChange?(debugMetrics)
+    }
+
+    private func updateDebugMetrics(_ update: (inout RecognitionDebugMetrics) -> Void) {
+        update(&debugMetrics)
+        onDebugMetricsChange?(debugMetrics)
     }
 
     private static func localModelFolder() -> String? {
@@ -261,6 +377,80 @@ private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBacke
 
         return Array(UnsafeBufferPointer(start: channelData[0], count: frameLength))
     }
+
+    private static func rmsLevel(for samples: [Float]) -> Double {
+        guard !samples.isEmpty else { return 0 }
+        let sumSquares = samples.reduce(0.0) { partialResult, sample in
+            let value = Double(sample)
+            return partialResult + value * value
+        }
+        return sqrt(sumSquares / Double(samples.count))
+    }
+
+    private static func isReliableTranscript(_ transcript: String, segments: [TranscriptionSegment]) -> Bool {
+        let normalized = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.count >= 4 else { return false }
+        guard !isHighlyRepetitive(normalized) else { return false }
+        guard TextUtilities.compressionRatio(of: normalized) <= 2.4 else { return false }
+        guard !segments.isEmpty else { return true }
+
+        let noSpeechProb = segments.map(\.noSpeechProb).max() ?? 0
+        let avgLogprob = segments.map(\.avgLogprob).reduce(0, +) / Float(segments.count)
+        let compressionRatio = segments.map(\.compressionRatio).max() ?? 1
+
+        guard noSpeechProb < 0.6 else { return false }
+        guard avgLogprob > -1.0 else { return false }
+        guard compressionRatio <= 2.4 else { return false }
+        return true
+    }
+
+    private static func isDuplicate(_ transcript: String, previous: String) -> Bool {
+        guard !previous.isEmpty else { return false }
+        return normalizedForComparison(transcript) == normalizedForComparison(previous)
+    }
+
+    private static func acceptedTranscript(
+        from transcript: String,
+        segments: [TranscriptionSegment],
+        trimLeadingOverlap: Bool,
+        overlapDurationSeconds: Float
+    ) -> String {
+        guard trimLeadingOverlap, !segments.isEmpty else {
+            return transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        let trimmedText = segments
+            .filter { $0.end > overlapDurationSeconds }
+            .map(\.text)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return trimmedText
+    }
+
+    private static func normalizedForComparison(_ text: String) -> String {
+        text
+            .lowercased()
+            .filter { !$0.isWhitespace && !$0.isPunctuation }
+    }
+
+    private static func isHighlyRepetitive(_ text: String) -> Bool {
+        let characters = Array(text.filter { !$0.isWhitespace && !$0.isPunctuation })
+        guard characters.count >= 8 else { return false }
+
+        var longestRun = 1
+        var currentRun = 1
+        for index in 1..<characters.count {
+            if characters[index] == characters[index - 1] {
+                currentRun += 1
+                longestRun = max(longestRun, currentRun)
+            } else {
+                currentRun = 1
+            }
+        }
+
+        return Double(longestRun) / Double(characters.count) >= 0.45
+    }
 }
 
 @MainActor
@@ -279,9 +469,11 @@ private final class AppleSpeechRecognitionBackend: NSObject, SpeechRecognitionBa
 
     func start(
         language: String,
-        onRecognition: @escaping (String, Bool) -> Void,
-        onStateChange: @escaping (CaptureState) -> Void
+        onRecognition: @escaping (SpeechRecognitionResult) -> Void,
+        onStateChange: @escaping (CaptureState) -> Void,
+        onDebugMetricsChange: @escaping (RecognitionDebugMetrics) -> Void
     ) async {
+        onDebugMetricsChange(RecognitionDebugMetrics())
         onStateChange(.requestingPermission)
 
         let authorizationStatus = await requestAuthorization()
@@ -313,7 +505,13 @@ private final class AppleSpeechRecognitionBackend: NSObject, SpeechRecognitionBa
             Task { @MainActor in
                 if let result {
                     let text = result.bestTranscription.formattedString
-                    onRecognition(text, result.isFinal)
+                    onRecognition(
+                        SpeechRecognitionResult(
+                            text: text,
+                            kind: .accepted,
+                            isFinal: result.isFinal
+                        )
+                    )
                 }
 
                 if let error {

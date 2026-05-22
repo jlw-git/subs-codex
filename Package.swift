@@ -23,6 +23,11 @@ let package = Package(
             resources: [
                 .process("Resources")
             ]
+        ),
+        .testTarget(
+            name: "SubsAppTests",
+            dependencies: ["SubsApp"],
+            path: "Tests/SubsAppTests"
         )
     ]
 )

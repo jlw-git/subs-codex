@@ -5,12 +5,14 @@ MODE="${1:-run}"
 APP_NAME="Subs"
 BUNDLE_ID="com.jlwong.Subs"
 MIN_SYSTEM_VERSION="14.0"
+LOCAL_SIGNING_IDENTITY="Subs Local Dev"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
+APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 
@@ -23,11 +25,12 @@ RESOURCE_BUNDLE="$BUILD_DIR/Subs_SubsApp.bundle"
 
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_MACOS"
+mkdir -p "$APP_RESOURCES"
 cp "$BUILD_BINARY" "$APP_BINARY"
 chmod +x "$APP_BINARY"
 
 if [[ -d "$RESOURCE_BUNDLE" ]]; then
-  cp -R "$RESOURCE_BUNDLE" "$APP_BUNDLE/"
+  cp -R "$RESOURCE_BUNDLE" "$APP_RESOURCES/"
 fi
 
 cat >"$INFO_PLIST" <<PLIST
@@ -54,6 +57,12 @@ cat >"$INFO_PLIST" <<PLIST
 </dict>
 </plist>
 PLIST
+
+SIGNING_IDENTITY="-"
+if security find-identity -v -p codesigning | grep -Fq "\"$LOCAL_SIGNING_IDENTITY\""; then
+  SIGNING_IDENTITY="$LOCAL_SIGNING_IDENTITY"
+fi
+codesign --force --deep --sign "$SIGNING_IDENTITY" --identifier "$BUNDLE_ID" "$APP_BUNDLE"
 
 open_app() {
   /usr/bin/open -n "$APP_BUNDLE"
