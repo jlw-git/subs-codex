@@ -2,7 +2,7 @@ import Foundation
 
 @MainActor
 final class LocalTranslationService: ObservableObject {
-    @Published private(set) var activeBackendName = "OPUS-MT local runtime"
+    @Published private(set) var activeBackendName = "OPUS-MT"
     @Published private(set) var translationStatus = TranslationRuntimeStatus.notChecked
     @Published private(set) var latestPreflightError: String?
 
@@ -52,10 +52,10 @@ enum TranslationRuntimeStatus: Equatable {
 
     var title: String {
         switch self {
-        case .notChecked: "Not Checked"
+        case .notChecked: "Not checked"
         case .checking: "Checking"
         case .ready: "Ready"
-        case .failed: "Needs Attention"
+        case .failed: "Action needed"
         }
     }
 }
@@ -70,7 +70,7 @@ private protocol TranslationBackend {
 
 @MainActor
 private final class OPUSMTTranslationBackend: TranslationBackend {
-    let displayName = "OPUS-MT local runtime"
+    let displayName = "OPUS-MT"
     let declaration = LocalOnlyBackendDeclaration(
         name: "OPUS-MT local translation runtime",
         purpose: "translation",
@@ -298,7 +298,7 @@ private final class OPUSMTWorker: @unchecked Sendable {
         for request in requests {
             let response = try await send(request)
             guard response.ok, !(response.translatedText ?? "").isEmpty else {
-                throw LocalTranslationError.runtimeFailed(response.error ?? "OPUS-MT preflight returned an empty translation.")
+                throw LocalTranslationError.runtimeFailed(response.error ?? "OPUS-MT returned an empty translation.")
             }
         }
     }
@@ -408,13 +408,13 @@ enum LocalTranslationError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .runnerMissing:
-            "The bundled OPUS-MT translation runner is missing from the app resources."
+            "Translation is missing from the app bundle."
         case .runtimeMissing(let path):
-            "The local OPUS-MT Python runtime was not found at \(path). Run script/setup_opus_mt.sh and retry."
+            "Python for OPUS-MT was not found at \(path). Run script/setup_opus_mt.sh and retry."
         case .modelMissing(let languagePair, let path):
-            "The local OPUS-MT \(languagePair) model folder was not found at \(path). Run script/setup_opus_mt.sh and retry."
+            "The OPUS-MT \(languagePair) model is missing at \(path). Run script/setup_opus_mt.sh and retry."
         case .unsupportedLanguagePair(let languagePair):
-            "No local translation model is configured for \(languagePair). Subs currently supports th-en and ja-en."
+            "No model is available for \(languagePair). Subs supports th-en and ja-en."
         case .runtimeFailed(let message):
             message
         }

@@ -12,26 +12,32 @@ struct SubsApp: App {
         WindowGroup("Subs", id: "main") {
             ContentView()
                 .environmentObject(sessionStore)
-                .frame(minWidth: 980, minHeight: 640)
+                .frame(minWidth: 720, minHeight: 520)
         }
         .commands {
             CommandGroup(after: .newItem) {
-                Button(sessionStore.isRunning ? "Stop Capturing" : "Start Capturing") {
+                Button(sessionStore.isRunning ? "Stop" : "Start") {
                     Task { await sessionStore.toggleCapture() }
                 }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
             }
         }
 
-        Window("Live Subtitles", id: "overlay") {
+        Window("Subtitles", id: "overlay") {
             SubtitleOverlayView()
                 .environmentObject(sessionStore)
                 .frame(width: 760, height: 190)
         }
 
+        Window("Transcript", id: "transcript") {
+            TranscriptMemoryView()
+                .environmentObject(sessionStore)
+                .frame(width: 420, height: 560)
+        }
+
         MenuBarExtra {
             MenuBarControlsView(
-                openTranscript: { openWindow(id: "main") },
+                openTranscript: { openWindow(id: "transcript") },
                 openOverlay: { openWindow(id: "overlay") },
                 openSettings: { openSettings() }
             )

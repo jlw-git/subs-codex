@@ -15,11 +15,17 @@ The current product focus is:
 
 The current next-build order is documented in
 `docs/NEXT_BUILD_ORDER.md`. The current milestone is a trust build: the app now
-records local, no-text reliability reports for capture sessions, and the next
-step is to run the realistic call test matrix, fix the biggest trust breakers,
-expand translation evaluation, surface setup readiness, and then polish the
-subtitle overlay. Transcript persistence and diarization are intentionally
-deferred until live subtitles are stable enough for real meeting use.
+records local, no-text reliability reports for capture sessions and includes a
+pre-call readiness check for the selected local translation pair. The next step
+is to run the realistic call test matrix, fix the biggest trust breakers, expand
+translation evaluation, harden setup readiness, and then polish the subtitle
+overlay. Transcript persistence and diarization are intentionally deferred until
+live subtitles are stable enough for real meeting use.
+
+The current competitive product review lives in
+`docs/COMPETITIVE_PRODUCT_REVIEW.md`. It narrows the product wedge to private,
+app-agnostic Thai/Japanese -> English meeting subtitles on Mac, rather than a
+broad cloud meeting assistant.
 
 ## Current backend status
 

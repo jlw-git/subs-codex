@@ -5,13 +5,34 @@ struct TranscriptMemoryView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("Bilingual Transcript Memory", systemImage: "rectangle.stack")
-                .font(.headline)
-                .padding(.horizontal, 16)
-                .padding(.top, 16)
+            HStack(alignment: .firstTextBaseline) {
+                Label("Transcript", systemImage: "rectangle.stack")
+                    .font(.headline)
+
+                Spacer()
+
+                Text("\(store.segments.count) lines")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Button {
+                    store.clearTranscript()
+                } label: {
+                    Label("Clear", systemImage: "trash")
+                }
+                .labelStyle(.iconOnly)
+                .help("Clear transcript")
+                .disabled(store.segments.isEmpty)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
 
             if store.segments.isEmpty {
-                ContentUnavailableView("No transcript yet", systemImage: "captions.bubble", description: Text("Start capture to create local bilingual memory."))
+                ContentUnavailableView(
+                    "No transcript",
+                    systemImage: "captions.bubble",
+                    description: Text("Accepted subtitles appear here.")
+                )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
@@ -36,17 +57,19 @@ private struct TranscriptRow: View {
             HStack {
                 Text(segment.speaker)
                     .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
                 Spacer()
                 Text(segment.timestamp, style: .time)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            Text(segment.sourceText)
-                .font(.callout)
-
             Text(segment.translatedText)
                 .font(.callout)
+                .fontWeight(.medium)
+
+            Text(segment.sourceText)
+                .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .padding(12)

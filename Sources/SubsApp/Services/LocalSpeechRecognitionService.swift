@@ -32,7 +32,7 @@ struct RecognitionDebugMetrics: Equatable {
 @MainActor
 final class LocalSpeechRecognitionService: ObservableObject {
     @Published private(set) var state: CaptureState = .idle
-    @Published private(set) var latestTranscript = "Waiting for local audio..."
+    @Published private(set) var latestTranscript = "Waiting for audio..."
     @Published private(set) var activeBackendName = SpeechRecognitionBackendKind.localWhisper.title
     @Published private(set) var debugMetrics = RecognitionDebugMetrics()
 
@@ -81,7 +81,7 @@ final class LocalSpeechRecognitionService: ObservableObject {
     func stop() {
         activeBackend?.stop()
         activeBackend = nil
-        latestTranscript = "Waiting for local audio..."
+        latestTranscript = "Waiting for audio..."
         debugMetrics = RecognitionDebugMetrics()
         state = .idle
     }
@@ -98,6 +98,7 @@ final class LocalSpeechRecognitionService: ObservableObject {
 
     private static func makeBackend(kind: SpeechRecognitionBackendKind) -> SpeechRecognitionBackend {
         switch kind {
+        case .liveFastWhisperCpp: WhisperCppSpeechRecognitionBackend()
         case .localWhisper: LocalWhisperSpeechRecognitionBackend()
         case .appleSpeech: AppleSpeechRecognitionBackend()
         }
@@ -121,7 +122,7 @@ private protocol SpeechRecognitionBackend {
 
 @MainActor
 private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBackend {
-    let displayName = "Local Whisper"
+    let displayName = "Accurate (WhisperKit medium)"
     let declaration = LocalOnlyBackendDeclaration(
         name: "Local Whisper ASR",
         purpose: "speech-to-text",
@@ -129,11 +130,14 @@ private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBacke
         allowsCloudFallback: false
     )
 
-    private let decodeWindowSampleCount = WhisperKit.sampleRate * 8
-    private let overlapSampleCount = WhisperKit.sampleRate * 2
-    private let minimumChunkRMS = 0.002
-    private let overlapDurationSeconds: Float = 2
+    private let decodeWindowSampleCount = WhisperKit.sampleRate * 3
+    private let overlapSampleCount = WhisperKit.sampleRate * 3 / 4
+    private let minimumChunkRMS = 0.00005
+    private let overlapDurationSeconds: Float = 0.75
     private var whisperKit: WhisperKit?
+    private var sampleConverter: AVAudioConverter?
+    private var sampleConverterSourceFormat: AVAudioFormat?
+    private var sampleConverterTargetFormat: AVAudioFormat?
     private var samples: [Float] = []
     private var isTranscribing = false
     private var sessionGeneration = 0
@@ -141,6 +145,7 @@ private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBacke
     private var transcribeTask: Task<Void, Never>?
     private var languageCode = "th"
     private var lastAcceptedTranscript = ""
+    private var lastCandidateTranscript = ""
     private var debugMetrics = RecognitionDebugMetrics()
     private var onRecognition: ((SpeechRecognitionResult) -> Void)?
     private var onStateChange: ((CaptureState) -> Void)?
@@ -161,6 +166,7 @@ private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBacke
         samples.removeAll(keepingCapacity: true)
         isTranscribing = false
         lastAcceptedTranscript = ""
+        lastCandidateTranscript = ""
         resetDebugMetrics()
         transcribeTask?.cancel()
 
@@ -169,7 +175,7 @@ private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBacke
                 guard let modelFolder = Self.localModelFolder(), FileManager.default.fileExists(atPath: modelFolder) else {
                     speechLogger.error("Local Whisper model folder is missing")
                     onStateChange(.failed("""
-                    Local Whisper ASR is selected for \(language), but no local Whisper model folder was found. Install a WhisperKit Core ML model at ~/Library/Application Support/Subs/Models/whisperkit and retry. Subs stopped here instead of using a cloud fallback.
+                    WhisperKit is selected for \(language), but the model is missing. Install it at ~/Library/Application Support/Subs/Models/whisperkit and retry. Subs will not use cloud speech recognition.
                     """))
                     return
                 }
@@ -191,12 +197,12 @@ private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBacke
             onStateChange(.running)
         } catch {
             speechLogger.error("Local Whisper ASR failed to load: \(error.localizedDescription, privacy: .public)")
-            onStateChange(.failed("Local Whisper ASR could not load the local model folder: \(error.localizedDescription). Subs did not use a cloud fallback."))
+            onStateChange(.failed("WhisperKit could not load the model: \(error.localizedDescription). Subs will not use cloud speech recognition."))
         }
     }
 
     func append(_ buffer: AVAudioPCMBuffer) {
-        guard whisperKit != nil, let convertedSamples = Self.convertToWhisperSamples(buffer) else { return }
+        guard whisperKit != nil, let convertedSamples = convertToWhisperSamples(buffer) else { return }
         samples.append(contentsOf: convertedSamples)
 
         guard samples.count >= decodeWindowSampleCount, !isTranscribing else { return }
@@ -221,6 +227,7 @@ private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBacke
         isTranscribing = false
         windowSequence = 0
         lastAcceptedTranscript = ""
+        lastCandidateTranscript = ""
         resetDebugMetrics()
         onRecognition = nil
         onStateChange = nil
@@ -254,13 +261,19 @@ private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBacke
                 withoutTimestamps: false,
                 wordTimestamps: false
             )
-            let results = try await whisperKit.transcribe(audioArray: audioSamples, decodeOptions: options)
-            let mergedResult = TranscriptionUtilities.mergeTranscriptionResults(results)
-            let transcript = mergedResult.text
+            let result = try await whisperKit.transcribe(audioArray: audioSamples, decodeOptions: options) { [weak self] progress in
+                let candidate = progress.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                Task { @MainActor [weak self] in
+                    self?.publishCandidate(candidate, generation: generation)
+                }
+                return true
+            }
+            guard let result else { return }
+            let transcript = result.text
                 .trimmingCharacters(in: .whitespacesAndNewlines)
 
             guard generation == sessionGeneration, !Task.isCancelled, !transcript.isEmpty else { return }
-            let segments = mergedResult.segments
+            let segments = result.segments
             guard Self.isReliableTranscript(transcript, segments: segments) else {
                 updateDebugMetrics {
                     $0.filteredLowConfidenceChunks += 1
@@ -303,7 +316,7 @@ private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBacke
             )
         } catch {
             guard generation == sessionGeneration, !Task.isCancelled else { return }
-            onStateChange?(.failed("Local Whisper ASR failed while transcribing locally: \(error.localizedDescription). Subs did not use a cloud fallback."))
+            onStateChange?(.failed("WhisperKit could not transcribe: \(error.localizedDescription). Subs will not use cloud speech recognition."))
         }
     }
 
@@ -315,6 +328,25 @@ private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBacke
     private func updateDebugMetrics(_ update: (inout RecognitionDebugMetrics) -> Void) {
         update(&debugMetrics)
         onDebugMetricsChange?(debugMetrics)
+    }
+
+    private func publishCandidate(_ transcript: String, generation: Int) {
+        guard generation == sessionGeneration, !transcript.isEmpty else { return }
+        guard transcript.count >= 4, !Self.isHighlyRepetitive(transcript) else { return }
+        guard !Self.isDuplicate(transcript, previous: lastCandidateTranscript),
+              !Self.isDuplicate(transcript, previous: lastAcceptedTranscript) else {
+            return
+        }
+
+        lastCandidateTranscript = transcript
+        updateDebugMetrics { $0.candidateChunks += 1 }
+        onRecognition?(
+            SpeechRecognitionResult(
+                text: transcript,
+                kind: .candidate,
+                isFinal: false
+            )
+        )
     }
 
     private static func localModelFolder() -> String? {
@@ -337,7 +369,7 @@ private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBacke
         }
     }
 
-    private static func convertToWhisperSamples(_ buffer: AVAudioPCMBuffer) -> [Float]? {
+    private func convertToWhisperSamples(_ buffer: AVAudioPCMBuffer) -> [Float]? {
         guard let targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: Double(WhisperKit.sampleRate),
@@ -350,10 +382,11 @@ private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBacke
         let sourceFormat = buffer.format
         let ratio = targetFormat.sampleRate / sourceFormat.sampleRate
         let frameCapacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 1
-        guard let convertedBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: frameCapacity),
-              let converter = AVAudioConverter(from: sourceFormat, to: targetFormat) else {
+        guard let convertedBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: frameCapacity) else {
             return nil
         }
+        let converter = sampleConverter(from: sourceFormat, to: targetFormat)
+        converter.reset()
 
         var didProvideInput = false
         var conversionError: NSError?
@@ -376,6 +409,20 @@ private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBacke
         guard frameLength > 0 else { return nil }
 
         return Array(UnsafeBufferPointer(start: channelData[0], count: frameLength))
+    }
+
+    private func sampleConverter(from sourceFormat: AVAudioFormat, to targetFormat: AVAudioFormat) -> AVAudioConverter {
+        if let sampleConverter,
+           sampleConverterSourceFormat == sourceFormat,
+           sampleConverterTargetFormat == targetFormat {
+            return sampleConverter
+        }
+
+        let converter = AVAudioConverter(from: sourceFormat, to: targetFormat)!
+        sampleConverter = converter
+        sampleConverterSourceFormat = sourceFormat
+        sampleConverterTargetFormat = targetFormat
+        return converter
     }
 
     private static func rmsLevel(for samples: [Float]) -> Double {
@@ -454,6 +501,376 @@ private final class LocalWhisperSpeechRecognitionBackend: SpeechRecognitionBacke
 }
 
 @MainActor
+private final class WhisperCppSpeechRecognitionBackend: SpeechRecognitionBackend {
+    let displayName = "Live Fast (whisper.cpp turbo)"
+    let declaration = LocalOnlyBackendDeclaration(
+        name: "whisper.cpp local ASR",
+        purpose: "speech-to-text",
+        location: .onDevice,
+        allowsCloudFallback: false
+    )
+
+    private let decodeWindowSampleCount = WhisperKit.sampleRate * 2
+    private let overlapSampleCount = WhisperKit.sampleRate / 2
+    private let minimumChunkRMS = 0.00005
+    private var sampleConverter: AVAudioConverter?
+    private var sampleConverterSourceFormat: AVAudioFormat?
+    private var sampleConverterTargetFormat: AVAudioFormat?
+    private var samples: [Float] = []
+    private var isTranscribing = false
+    private var sessionGeneration = 0
+    private var transcribeTask: Task<Void, Never>?
+    private var languageCode = "th"
+    private var lastAcceptedTranscript = ""
+    private var lastCandidateTranscript = ""
+    private var debugMetrics = RecognitionDebugMetrics()
+    private var worker: WhisperCppWorker?
+    private var onRecognition: ((SpeechRecognitionResult) -> Void)?
+    private var onStateChange: ((CaptureState) -> Void)?
+    private var onDebugMetricsChange: ((RecognitionDebugMetrics) -> Void)?
+
+    func start(
+        language: String,
+        onRecognition: @escaping (SpeechRecognitionResult) -> Void,
+        onStateChange: @escaping (CaptureState) -> Void,
+        onDebugMetricsChange: @escaping (RecognitionDebugMetrics) -> Void
+    ) async {
+        self.onRecognition = onRecognition
+        self.onStateChange = onStateChange
+        self.onDebugMetricsChange = onDebugMetricsChange
+        sessionGeneration += 1
+        languageCode = Self.languageCode(for: language)
+        samples.removeAll(keepingCapacity: true)
+        isTranscribing = false
+        lastAcceptedTranscript = ""
+        lastCandidateTranscript = ""
+        resetDebugMetrics()
+        transcribeTask?.cancel()
+
+        do {
+            guard FileManager.default.isExecutableFile(atPath: Self.executablePath()) else {
+                onStateChange(.failed("""
+                Live Fast needs whisper.cpp at \(Self.executablePath()). Run script/setup_whisper_cpp.sh --verify and retry. Subs will not use cloud speech recognition.
+                """))
+                return
+            }
+
+            guard FileManager.default.fileExists(atPath: Self.turboModelPath()) else {
+                onStateChange(.failed("""
+                Live Fast needs the whisper.cpp model at \(Self.turboModelPath()). Run script/setup_whisper_cpp.sh --verify and retry. Subs will not use cloud speech recognition.
+                """))
+                return
+            }
+
+            let worker = try workerInstance()
+            try await worker.verify(
+                executablePath: Self.executablePath(),
+                modelPath: Self.turboModelPath()
+            )
+            onStateChange(.running)
+        } catch {
+            onStateChange(.failed("Live Fast could not start whisper.cpp: \(error.localizedDescription). Subs will not use cloud speech recognition."))
+        }
+    }
+
+    func append(_ buffer: AVAudioPCMBuffer) {
+        guard let convertedSamples = convertToWhisperSamples(buffer) else { return }
+        samples.append(contentsOf: convertedSamples)
+
+        guard samples.count >= decodeWindowSampleCount, !isTranscribing else { return }
+        let chunk = Array(samples.prefix(decodeWindowSampleCount))
+        let advanceSampleCount = decodeWindowSampleCount - overlapSampleCount
+        samples.removeFirst(min(samples.count, advanceSampleCount))
+        isTranscribing = true
+        let generation = sessionGeneration
+
+        transcribeTask = Task { @MainActor [weak self] in
+            await self?.transcribe(chunk, generation: generation)
+        }
+    }
+
+    func stop() {
+        sessionGeneration += 1
+        transcribeTask?.cancel()
+        transcribeTask = nil
+        samples.removeAll(keepingCapacity: true)
+        isTranscribing = false
+        lastAcceptedTranscript = ""
+        lastCandidateTranscript = ""
+        resetDebugMetrics()
+        onRecognition = nil
+        onStateChange = nil
+        onDebugMetricsChange = nil
+    }
+
+    private func transcribe(_ audioSamples: [Float], generation: Int) async {
+        defer {
+            if generation == sessionGeneration {
+                isTranscribing = false
+            }
+        }
+
+        guard generation == sessionGeneration, !Task.isCancelled else { return }
+        let rms = Self.rmsLevel(for: audioSamples)
+        updateDebugMetrics { $0.latestRMS = rms }
+        guard rms >= minimumChunkRMS else {
+            updateDebugMetrics { $0.skippedQuietChunks += 1 }
+            return
+        }
+
+        let audioURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("subs-whisper-cpp-\(UUID().uuidString)")
+            .appendingPathExtension("wav")
+        defer { try? FileManager.default.removeItem(at: audioURL) }
+
+        do {
+            try Self.writeWAV(samples: audioSamples, to: audioURL)
+            let response = try await workerInstance().transcribe(
+                audioPath: audioURL.path,
+                executablePath: Self.executablePath(),
+                modelPath: Self.turboModelPath(),
+                languageCode: languageCode
+            )
+
+            let transcript = (response.text ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard generation == sessionGeneration, !Task.isCancelled, !transcript.isEmpty else { return }
+            guard transcript.count >= 4, !Self.isHighlyRepetitive(transcript) else {
+                updateDebugMetrics { $0.filteredLowConfidenceChunks += 1 }
+                return
+            }
+
+            if !Self.isDuplicate(transcript, previous: lastCandidateTranscript),
+               !Self.isDuplicate(transcript, previous: lastAcceptedTranscript) {
+                lastCandidateTranscript = transcript
+                updateDebugMetrics { $0.candidateChunks += 1 }
+                onRecognition?(
+                    SpeechRecognitionResult(
+                        text: transcript,
+                        kind: .candidate,
+                        isFinal: false
+                    )
+                )
+            }
+
+            guard !Self.isDuplicate(transcript, previous: lastAcceptedTranscript) else {
+                updateDebugMetrics { $0.filteredDuplicateChunks += 1 }
+                return
+            }
+
+            lastAcceptedTranscript = transcript
+            updateDebugMetrics { $0.acceptedChunks += 1 }
+            onRecognition?(
+                SpeechRecognitionResult(
+                    text: transcript,
+                    kind: .accepted,
+                    isFinal: true
+                )
+            )
+        } catch {
+            guard generation == sessionGeneration, !Task.isCancelled else { return }
+            onStateChange?(.failed("Live Fast could not transcribe: \(error.localizedDescription). Subs will not use cloud speech recognition."))
+        }
+    }
+
+    private func workerInstance() throws -> WhisperCppWorker {
+        if let worker {
+            return worker
+        }
+
+        guard let scriptURL = Bundle.module.url(forResource: "whisper_cpp_worker", withExtension: "py") else {
+            throw WhisperCppRecognitionError.runnerMissing
+        }
+
+        let worker = WhisperCppWorker(
+            pythonPath: Self.pythonPath(),
+            scriptPath: scriptURL.path
+        )
+        self.worker = worker
+        return worker
+    }
+
+    private func resetDebugMetrics() {
+        debugMetrics = RecognitionDebugMetrics()
+        onDebugMetricsChange?(debugMetrics)
+    }
+
+    private func updateDebugMetrics(_ update: (inout RecognitionDebugMetrics) -> Void) {
+        update(&debugMetrics)
+        onDebugMetricsChange?(debugMetrics)
+    }
+
+    private func convertToWhisperSamples(_ buffer: AVAudioPCMBuffer) -> [Float]? {
+        guard let targetFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: Double(WhisperKit.sampleRate),
+            channels: 1,
+            interleaved: false
+        ) else {
+            return nil
+        }
+
+        let sourceFormat = buffer.format
+        let ratio = targetFormat.sampleRate / sourceFormat.sampleRate
+        let frameCapacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 1
+        guard let convertedBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: frameCapacity) else {
+            return nil
+        }
+        let converter = sampleConverter(from: sourceFormat, to: targetFormat)
+        converter.reset()
+
+        var didProvideInput = false
+        var conversionError: NSError?
+        let status = converter.convert(to: convertedBuffer, error: &conversionError) { _, outStatus in
+            if didProvideInput {
+                outStatus.pointee = .noDataNow
+                return nil
+            }
+
+            didProvideInput = true
+            outStatus.pointee = .haveData
+            return buffer
+        }
+
+        guard status != .error, conversionError == nil, let channelData = convertedBuffer.floatChannelData else {
+            return nil
+        }
+
+        let frameLength = Int(convertedBuffer.frameLength)
+        guard frameLength > 0 else { return nil }
+
+        return Array(UnsafeBufferPointer(start: channelData[0], count: frameLength))
+    }
+
+    private func sampleConverter(from sourceFormat: AVAudioFormat, to targetFormat: AVAudioFormat) -> AVAudioConverter {
+        if let sampleConverter,
+           sampleConverterSourceFormat == sourceFormat,
+           sampleConverterTargetFormat == targetFormat {
+            return sampleConverter
+        }
+
+        let converter = AVAudioConverter(from: sourceFormat, to: targetFormat)!
+        sampleConverter = converter
+        sampleConverterSourceFormat = sourceFormat
+        sampleConverterTargetFormat = targetFormat
+        return converter
+    }
+
+    private static func writeWAV(samples: [Float], to url: URL) throws {
+        guard let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: Double(WhisperKit.sampleRate),
+            channels: 1,
+            interleaved: false
+        ), let buffer = AVAudioPCMBuffer(
+            pcmFormat: format,
+            frameCapacity: AVAudioFrameCount(samples.count)
+        ) else {
+            throw WhisperCppRecognitionError.audioEncodingFailed
+        }
+
+        buffer.frameLength = AVAudioFrameCount(samples.count)
+        guard let channelData = buffer.floatChannelData else {
+            throw WhisperCppRecognitionError.audioEncodingFailed
+        }
+        samples.withUnsafeBufferPointer { pointer in
+            channelData[0].update(from: pointer.baseAddress!, count: samples.count)
+        }
+
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        try file.write(from: buffer)
+    }
+
+    private static func languageCode(for language: String) -> String {
+        switch language {
+        case "Japanese": "ja"
+        case "Thai": "th"
+        default: "en"
+        }
+    }
+
+    private static func rmsLevel(for samples: [Float]) -> Double {
+        guard !samples.isEmpty else { return 0 }
+        let sumSquares = samples.reduce(0.0) { partialResult, sample in
+            let value = Double(sample)
+            return partialResult + value * value
+        }
+        return sqrt(sumSquares / Double(samples.count))
+    }
+
+    private static func isDuplicate(_ transcript: String, previous: String) -> Bool {
+        guard !previous.isEmpty else { return false }
+        return normalizedForComparison(transcript) == normalizedForComparison(previous)
+    }
+
+    private static func normalizedForComparison(_ text: String) -> String {
+        text
+            .lowercased()
+            .filter { !$0.isWhitespace && !$0.isPunctuation }
+    }
+
+    private static func isHighlyRepetitive(_ text: String) -> Bool {
+        let characters = Array(text.filter { !$0.isWhitespace && !$0.isPunctuation })
+        guard characters.count >= 8 else { return false }
+
+        var longestRun = 1
+        var currentRun = 1
+        for index in 1..<characters.count {
+            if characters[index] == characters[index - 1] {
+                currentRun += 1
+                longestRun = max(longestRun, currentRun)
+            } else {
+                currentRun = 1
+            }
+        }
+
+        return Double(longestRun) / Double(characters.count) >= 0.45
+    }
+
+    private static func executablePath() -> String {
+        let configuredPath = ProcessInfo.processInfo.environment["SUBS_WHISPER_CPP_CLI"] ?? ""
+        if !configuredPath.isEmpty {
+            return expandingTilde(in: configuredPath)
+        }
+
+        return applicationSupportURL()
+            .appendingPathComponent("Runtime", isDirectory: true)
+            .appendingPathComponent("whisper-cpp", isDirectory: true)
+            .appendingPathComponent("whisper-cli")
+            .path
+    }
+
+    private static func turboModelPath() -> String {
+        let configuredPath = ProcessInfo.processInfo.environment["SUBS_WHISPER_CPP_TURBO_MODEL"] ?? ""
+        if !configuredPath.isEmpty {
+            return expandingTilde(in: configuredPath)
+        }
+
+        return applicationSupportURL()
+            .appendingPathComponent("Models", isDirectory: true)
+            .appendingPathComponent("whisper-cpp", isDirectory: true)
+            .appendingPathComponent("ggml-large-v3-turbo-q5_0.bin")
+            .path
+    }
+
+    private static func pythonPath() -> String {
+        let configuredPath = ProcessInfo.processInfo.environment["SUBS_WHISPER_CPP_PYTHON"] ?? ""
+        return configuredPath.isEmpty ? "/usr/bin/python3" : expandingTilde(in: configuredPath)
+    }
+
+    private static func applicationSupportURL() -> URL {
+        let applicationSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support", isDirectory: true)
+
+        return applicationSupport.appendingPathComponent("Subs", isDirectory: true)
+    }
+
+    private static func expandingTilde(in path: String) -> String {
+        (path as NSString).expandingTildeInPath
+    }
+}
+
+@MainActor
 private final class AppleSpeechRecognitionBackend: NSObject, SpeechRecognitionBackend {
     let displayName = "Apple Speech"
     let declaration = LocalOnlyBackendDeclaration(
@@ -478,7 +895,7 @@ private final class AppleSpeechRecognitionBackend: NSObject, SpeechRecognitionBa
 
         let authorizationStatus = await requestAuthorization()
         guard authorizationStatus == .authorized else {
-            onStateChange(.failed("Speech Recognition permission is required for local transcription."))
+            onStateChange(.failed("Allow Speech Recognition in System Settings."))
             return
         }
 
@@ -489,7 +906,7 @@ private final class AppleSpeechRecognitionBackend: NSObject, SpeechRecognitionBa
         }
 
         guard recognizer.supportsOnDeviceRecognition else {
-            onStateChange(.failed("On-device speech recognition is not installed or supported for \(language) in the Apple Speech backend. Subs did not fall back to cloud recognition."))
+            onStateChange(.failed("Apple Speech is not available on device for \(language). Subs will not use cloud speech recognition."))
             return
         }
 
@@ -515,7 +932,7 @@ private final class AppleSpeechRecognitionBackend: NSObject, SpeechRecognitionBa
                 }
 
                 if let error {
-                    onStateChange(.failed("Local speech recognition stopped: \(error.localizedDescription)"))
+                    onStateChange(.failed("Speech recognition stopped: \(error.localizedDescription)"))
                 }
             }
         }
@@ -546,6 +963,192 @@ private final class AppleSpeechRecognitionBackend: NSObject, SpeechRecognitionBa
         case "Japanese": "ja-JP"
         case "Thai": "th-TH"
         default: "en-US"
+        }
+    }
+}
+
+private enum WhisperCppWorkerCommand: String, Codable {
+    case verify
+    case transcribe
+}
+
+private struct WhisperCppWorkerRequest: Codable {
+    let id: String
+    let command: WhisperCppWorkerCommand
+    let executablePath: String
+    let modelPath: String
+    let audioPath: String?
+    let languageCode: String?
+}
+
+private struct WhisperCppWorkerResponse: Codable {
+    let id: String
+    let ok: Bool
+    let text: String?
+    let error: String?
+}
+
+private final class WhisperCppWorker: @unchecked Sendable {
+    private let pythonPath: String
+    private let scriptPath: String
+    private let queue = DispatchQueue(label: "com.jlwong.Subs.WhisperCppWorker")
+    private var process: Process?
+    private var inputHandle: FileHandle?
+    private var outputHandle: FileHandle?
+    private var errorHandle: FileHandle?
+
+    init(pythonPath: String, scriptPath: String) {
+        self.pythonPath = pythonPath
+        self.scriptPath = scriptPath
+    }
+
+    func verify(executablePath: String, modelPath: String) async throws {
+        let response = try await send(
+            WhisperCppWorkerRequest(
+                id: UUID().uuidString,
+                command: .verify,
+                executablePath: executablePath,
+                modelPath: modelPath,
+                audioPath: nil,
+                languageCode: nil
+            )
+        )
+        guard response.ok else {
+            throw WhisperCppRecognitionError.runtimeFailed(response.error ?? "whisper.cpp worker verification failed.")
+        }
+    }
+
+    func transcribe(
+        audioPath: String,
+        executablePath: String,
+        modelPath: String,
+        languageCode: String
+    ) async throws -> WhisperCppWorkerResponse {
+        let response = try await send(
+            WhisperCppWorkerRequest(
+                id: UUID().uuidString,
+                command: .transcribe,
+                executablePath: executablePath,
+                modelPath: modelPath,
+                audioPath: audioPath,
+                languageCode: languageCode
+            )
+        )
+        guard response.ok else {
+            throw WhisperCppRecognitionError.runtimeFailed(response.error ?? "whisper.cpp worker failed without an error message.")
+        }
+        return response
+    }
+
+    private func send(_ request: WhisperCppWorkerRequest) async throws -> WhisperCppWorkerResponse {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                do {
+                    try self.startIfNeeded()
+
+                    let requestData = try JSONEncoder().encode(request)
+                    guard var requestLine = String(data: requestData, encoding: .utf8) else {
+                        throw WhisperCppRecognitionError.runtimeFailed("Could not encode whisper.cpp worker request.")
+                    }
+                    requestLine.append("\n")
+
+                    guard let inputHandle = self.inputHandle,
+                          let outputHandle = self.outputHandle else {
+                        throw WhisperCppRecognitionError.runtimeFailed("whisper.cpp worker pipes are unavailable.")
+                    }
+
+                    try inputHandle.write(contentsOf: Data(requestLine.utf8))
+                    guard let lineData = try outputHandle.readLineData() else {
+                        let errorOutput = self.readWorkerError()
+                        self.stop()
+                        throw WhisperCppRecognitionError.runtimeFailed(
+                            errorOutput.isEmpty ? "whisper.cpp worker exited without a response." : errorOutput
+                        )
+                    }
+
+                    let response = try JSONDecoder().decode(WhisperCppWorkerResponse.self, from: lineData)
+                    guard response.id == request.id else {
+                        throw WhisperCppRecognitionError.runtimeFailed("whisper.cpp worker response id did not match the request.")
+                    }
+                    continuation.resume(returning: response)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    private func startIfNeeded() throws {
+        if let process, process.isRunning {
+            return
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: pythonPath)
+        process.arguments = [scriptPath, "--worker"]
+
+        let inputPipe = Pipe()
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardInput = inputPipe
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+
+        try process.run()
+        self.process = process
+        inputHandle = inputPipe.fileHandleForWriting
+        outputHandle = outputPipe.fileHandleForReading
+        errorHandle = errorPipe.fileHandleForReading
+    }
+
+    private func stop() {
+        process?.terminate()
+        process = nil
+        inputHandle = nil
+        outputHandle = nil
+        errorHandle = nil
+    }
+
+    private func readWorkerError() -> String {
+        guard let errorHandle else { return "" }
+        let data = errorHandle.availableData
+        return String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+}
+
+private extension FileHandle {
+    func readLineData() throws -> Data? {
+        var data = Data()
+
+        while true {
+            let chunk = try read(upToCount: 1)
+            guard let chunk, !chunk.isEmpty else {
+                return data.isEmpty ? nil : data
+            }
+
+            if chunk == Data([0x0A]) {
+                return data
+            }
+
+            data.append(chunk)
+        }
+    }
+}
+
+private enum WhisperCppRecognitionError: LocalizedError {
+    case runnerMissing
+    case audioEncodingFailed
+    case runtimeFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .runnerMissing:
+            "The bundled whisper.cpp worker is missing from the app resources."
+        case .audioEncodingFailed:
+            "Could not encode the local audio chunk for whisper.cpp."
+        case .runtimeFailed(let message):
+            message
         }
     }
 }

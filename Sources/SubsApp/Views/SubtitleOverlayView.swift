@@ -4,9 +4,9 @@ struct SubtitleOverlayView: View {
     @EnvironmentObject private var store: MeetingSessionStore
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label(store.isRunning ? "Live" : store.statusTitle, systemImage: store.isRunning ? "waveform" : store.primaryActionSystemImage)
+                Label(store.isRunning ? "Live subtitles" : store.statusTitle, systemImage: store.isRunning ? "waveform" : store.primaryActionSystemImage)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(store.isRunning ? .green : .secondary)
 
@@ -15,19 +15,27 @@ struct SubtitleOverlayView: View {
                 CaptureMeterCompact(level: store.capture.audioPulse)
             }
 
-            Text(store.currentSourceSubtitle)
-                .font(.system(size: 28, weight: .semibold, design: .rounded))
+            Text(primarySubtitle)
+                .font(.system(size: 30, weight: .semibold, design: .rounded))
+                .foregroundStyle(textColor)
                 .lineLimit(2)
                 .minimumScaleFactor(0.7)
-
-            Text(store.currentTranslatedSubtitle.isEmpty ? "Translation will appear here." : store.currentTranslatedSubtitle)
-                .font(.system(size: 22, weight: .medium, design: .rounded))
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-                .minimumScaleFactor(0.7)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(18)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var primarySubtitle: String {
+        store.overlayText
+    }
+
+    private var textColor: Color {
+        if store.blockingErrorSummary != nil {
+            return .red
+        }
+
+        return store.currentTranslatedSubtitle.isEmpty ? .secondary : .primary
     }
 }
 

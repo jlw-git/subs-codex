@@ -11,9 +11,9 @@ enum CaptureState: Equatable {
         switch self {
         case .idle: "Idle"
         case .starting: "Starting"
-        case .requestingPermission: "Requesting Permission"
-        case .running: "Capturing Locally"
-        case .failed: "Needs Attention"
+        case .requestingPermission: "Permission needed"
+        case .running: "Capturing"
+        case .failed: "Action needed"
         }
     }
 

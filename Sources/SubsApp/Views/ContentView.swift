@@ -7,15 +7,8 @@ struct ContentView: View {
         NavigationSplitView {
             SidebarView()
         } detail: {
-            HStack(spacing: 0) {
-                LiveSubtitlesView()
-                    .frame(minWidth: 540)
-
-                Divider()
-
-                TranscriptMemoryView()
-                    .frame(width: 360)
-            }
+            LiveSubtitlesView()
+                .frame(minWidth: 540)
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -25,16 +18,7 @@ struct ContentView: View {
                     Label(store.primaryActionTitle, systemImage: store.primaryActionSystemImage)
                 }
                 .disabled(store.isStarting)
-                .help(store.isRunning ? "Stop local capture" : "Start local capture")
-            }
-
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    store.clearTranscript()
-                } label: {
-                    Label("Clear", systemImage: "trash")
-                }
-                .help("Clear local transcript memory")
+                .help(store.isRunning ? "Stop capture" : "Start capture")
             }
         }
     }

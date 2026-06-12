@@ -9,15 +9,22 @@ struct MenuBarControlsView: View {
     let openSettings: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 11) {
             StatusHeaderView()
 
             Divider()
 
             Button {
+                Task { await store.checkReadiness() }
+            } label: {
+                Label("Check Readiness", systemImage: "checkmark.shield")
+            }
+            .disabled(store.isReadinessCheckDisabled)
+
+            Button {
                 Task { await store.toggleCapture() }
             } label: {
-                Label(store.isRunning ? "Stop Capture" : store.primaryActionTitle, systemImage: store.primaryActionSystemImage)
+                Label(store.isRunning ? "Stop" : store.primaryActionTitle, systemImage: store.primaryActionSystemImage)
             }
             .disabled(store.isStarting)
             .keyboardShortcut("r", modifiers: [.command, .shift])
@@ -25,30 +32,13 @@ struct MenuBarControlsView: View {
             Button {
                 openOverlay()
             } label: {
-                Label("Show Subtitles", systemImage: "rectangle.on.rectangle")
+                Label("Subtitles", systemImage: "rectangle.on.rectangle")
             }
 
             Button {
                 openTranscript()
             } label: {
-                Label("Open Transcript", systemImage: "text.alignleft")
-            }
-
-            Divider()
-
-            Picker("Source", selection: $store.sourceLanguage) {
-                Text("Thai").tag("Thai")
-                Text("Japanese").tag("Japanese")
-            }
-
-            Picker("Target", selection: $store.targetLanguage) {
-                Text("English").tag("English")
-            }
-
-            Picker("ASR", selection: $store.speechBackend) {
-                ForEach(SpeechRecognitionBackendKind.allCases) { backend in
-                    Text(backend.title).tag(backend)
-                }
+                Label("Transcript", systemImage: "text.alignleft")
             }
 
             Divider()
@@ -66,7 +56,7 @@ struct MenuBarControlsView: View {
             }
         }
         .padding(12)
-        .frame(width: 280)
+        .frame(width: 300)
     }
 }
 
@@ -75,19 +65,28 @@ private struct StatusHeaderView: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: store.isRunning ? "waveform.circle.fill" : "lock.shield")
+            Image(systemName: store.readinessSummary.systemImage)
                 .font(.title2)
-                .foregroundStyle(store.isRunning ? .green : .secondary)
+                .foregroundStyle(readinessColor)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(store.statusTitle)
+                Text(store.readinessSummary.title)
                     .font(.headline)
 
-                Text("\(store.sourceLanguage) -> \(store.targetLanguage)")
+                Text("\(store.readinessSummary.detail) | Local only")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
+        }
+    }
+
+    private var readinessColor: Color {
+        switch store.readinessSummary.tone {
+        case .ready: .green
+        case .checking: .blue
+        case .critical: .red
+        case .neutral: .secondary
         }
     }
 }

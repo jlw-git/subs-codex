@@ -26,7 +26,7 @@ struct ReliabilitySessionRecorderTests {
         recorder.markRecognition(.accepted, metrics: RecognitionDebugMetrics(latestRMS: 0.01, skippedQuietChunks: 1, filteredLowConfidenceChunks: 2, filteredDuplicateChunks: 3, candidateChunks: 4, acceptedChunks: 5))
         recorder.recordTranslationAttempt()
         now = now.addingTimeInterval(0.4)
-        recorder.recordTranslationSuccess(latencyMs: 400)
+        recorder.recordTranslationSuccess(latencyMs: 400, kind: .accepted)
 
         let report = try #require(recorder.finalize(stopReason: "stopped_by_user"))
         let urls = try #require(recorder.latestReportFileURLs)
@@ -65,11 +65,13 @@ struct ReliabilitySessionRecorderTests {
         recorder.markFirstAudioBuffer()
         now = now.addingTimeInterval(0.1)
         recorder.markRecognition(.candidate, metrics: RecognitionDebugMetrics(candidateChunks: 1))
+        recorder.recordTranslationAttempt()
+        recorder.recordTranslationSuccess(latencyMs: 120, kind: .candidate)
         now = now.addingTimeInterval(0.2)
         recorder.markRecognition(.accepted, metrics: RecognitionDebugMetrics(candidateChunks: 1, acceptedChunks: 1))
 
         recorder.recordTranslationAttempt()
-        recorder.recordTranslationSuccess(latencyMs: 300)
+        recorder.recordTranslationSuccess(latencyMs: 300, kind: .accepted)
         recorder.recordTranslationAttempt()
         recorder.recordTranslationFailure(latencyMs: 900, message: "Local translation unavailable")
 
@@ -80,12 +82,35 @@ struct ReliabilitySessionRecorderTests {
         #expect(report.timings.firstAudioBufferMs == 900)
         #expect(report.timings.firstCandidateSubtitleMs == 1000)
         #expect(report.timings.firstAcceptedSubtitleMs == 1200)
-        #expect(report.translation.attempts == 2)
-        #expect(report.translation.successes == 1)
+        #expect(report.timings.firstTranslatedDraftSubtitleMs == 1000)
+        #expect(report.timings.firstTranslatedCorrectedSubtitleMs == 1200)
+        #expect(report.translation.attempts == 3)
+        #expect(report.translation.successes == 2)
         #expect(report.translation.failures == 1)
-        #expect(report.translation.minLatencyMs == 300)
-        #expect(report.translation.averageLatencyMs == 600.0)
+        #expect(report.translation.minLatencyMs == 120)
+        #expect(report.translation.averageLatencyMs == 440.0)
         #expect(report.translation.maxLatencyMs == 900)
+    }
+
+    @Test
+    func testASRModeDeclarationsRemainLocalOnly() throws {
+        for backend in SpeechRecognitionBackendKind.allCases {
+            #expect(backend.declaration.location == .onDevice)
+            #expect(backend.declaration.allowsCloudFallback == false)
+            #expect(try LocalOnlyPolicy.validate(backend.declaration) == ())
+        }
+    }
+
+    @Test
+    func testInitialDisplayStateDoesNotUseSubtitleContentForStatus() throws {
+        let store = MeetingSessionStore()
+
+        #expect(store.currentSourceSubtitle.isEmpty)
+        #expect(store.currentTranslatedSubtitle.isEmpty)
+        #expect(store.livePrimaryText == "Press Start to begin")
+        #expect(store.overlayText == "Press Start to begin")
+        #expect(store.liveSecondarySourceText == nil)
+        #expect(store.blockingErrorSummary == nil)
     }
 
     @Test

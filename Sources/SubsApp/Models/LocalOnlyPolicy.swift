@@ -26,7 +26,7 @@ enum LocalOnlyPolicyError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .cloudProcessingForbidden(let backendName):
-            "\(backendName) is not allowed because Subs must keep realtime translation fully on-device."
+            "\(backendName) is not allowed. Subs keeps meeting data on device."
         }
     }
 }

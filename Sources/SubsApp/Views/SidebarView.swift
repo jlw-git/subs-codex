@@ -6,25 +6,33 @@ struct SidebarView: View {
     var body: some View {
         List {
             Section("Session") {
-                Label(store.statusTitle, systemImage: stateIcon)
-                Label("No cloud transport", systemImage: "network.slash")
-                Label("\(store.segments.count) transcript lines", systemImage: "text.alignleft")
+                SidebarStatusRow(title: store.statusTitle, detail: "\(store.sourceLanguage) to \(store.targetLanguage)", systemImage: stateIcon, tint: stateTint)
+                SidebarStatusRow(title: "Local only", detail: "Cloud off", systemImage: "network.slash", tint: .green)
             }
 
             Section("Languages") {
-                Picker("Source", selection: $store.sourceLanguage) {
-                    Text("Thai").tag("Thai")
-                    Text("Japanese").tag("Japanese")
-                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Source")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
-                Picker("Target", selection: $store.targetLanguage) {
-                    Text("English").tag("English")
-                }
-
-                Picker("ASR", selection: $store.speechBackend) {
-                    ForEach(SpeechRecognitionBackendKind.allCases) { backend in
-                        Text(backend.title).tag(backend)
+                    Picker("Source", selection: $store.sourceLanguage) {
+                        Text("Thai").tag("Thai")
+                        Text("Japanese").tag("Japanese")
                     }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Target")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Text(store.targetLanguage)
+                        .font(.callout)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }
@@ -39,6 +47,42 @@ struct SidebarView: View {
         case .requestingPermission: "lock.open"
         case .running: "waveform"
         case .failed: "exclamationmark.triangle"
+        }
+    }
+
+    private var stateTint: Color {
+        if store.isRunning { return .green }
+        if store.isStarting { return .blue }
+        if store.capture.state.failureMessage != nil || store.speech.state.failureMessage != nil {
+            return .red
+        }
+        return .secondary
+    }
+}
+
+private struct SidebarStatusRow: View {
+    let title: String
+    let detail: String
+    let systemImage: String
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: systemImage)
+                .foregroundStyle(tint)
+                .frame(width: 16)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+            }
         }
     }
 }

@@ -1,6 +1,6 @@
 # Next Build Order
 
-Last reviewed: 2026-05-22
+Last reviewed: 2026-06-12
 
 This file is the canonical product context for what to build next. Update it
 whenever product priorities change, and keep the short README summary in sync.
@@ -21,6 +21,28 @@ Thai/Japanese meeting audio
 The non-negotiable product invariant remains local-only processing. Do not add
 cloud fallback for speech recognition, translation, summaries, diagnostics, or
 transcript memory.
+
+## Design Principles
+
+The primary UI should be calm, focused, and obvious. Complexity can exist, but
+one layer deeper.
+
+- Essentials first: the default live surface should show capture state, language
+  direction, local-only trust, and live subtitles.
+- Progressive disclosure: readiness details, diagnostics, model/runtime status,
+  reliability reports, and transcript memory belong in Settings, separate
+  windows, or collapsed secondary layers.
+- Lower cognitive load: avoid dashboard-like live views, card-heavy default
+  layouts, repeated status blocks, and duplicated privacy copy.
+- Task hierarchy over completeness: live English subtitles are the product
+  moment; setup, transcript memory, and diagnostics support that moment.
+- Concise professional copy: prefer user-facing labels such as "Speech",
+  "Translation", "Action needed", and "Permission needed"; avoid implementation
+  terms such as ASR, preflight, runtime, or backend in default UI.
+- Trust without repetition: keep the local-only promise visible, but do not
+  repeat it everywhere.
+- Show secondary state only when useful: blocking errors should surface clearly;
+  diagnostics should stay out of the default view.
 
 ## Current Build State
 
@@ -48,10 +70,17 @@ Recent focus:
 - Trust Build v0 instrumentation: first-audio timing, ASR/capture readiness,
   first candidate/accepted/translated subtitle timing, translation latency
   aggregation, failure stages, and Settings visibility for the latest report.
+- Competitive product review in `docs/COMPETITIVE_PRODUCT_REVIEW.md`, which
+  confirms the product wedge: app-agnostic local Mac capture, pre-call
+  readiness, and a focused Thai/Japanese -> English subtitle bar instead of a
+  broad cloud meeting assistant.
+- Pre-call `Check Readiness` action in the menu bar and Settings. This validates
+  local-only backend declarations and warms the selected local translation pair
+  without starting meeting capture.
 
 ## Next Build Order
 
-1. End-to-end call reliability sprint.
+1. End-to-end call reliability sprint, including pre-call readiness.
 
    Run the `docs/TRUST_BUILD_TEST_PLAN.md` matrix in real or realistic
    Teams/system-audio sessions before expanding product surface area. Use the
@@ -59,6 +88,10 @@ Recent focus:
    to first accepted subtitle, candidate-to-accepted ratio, duplicate rate,
    skipped quiet chunks, translation latency, failure states, and crashes. Fix
    the highest-impact trust breakers found in those reports and manual notes.
+   Treat readiness ambiguity as a reliability bug: before a meeting, the user
+   should be able to confirm local-only mode, capture permission state, selected
+   speech backend, selected translation pair, model availability, and latest
+   reliability report status without starting live capture.
 
 2. Expanded translation eval.
 
@@ -68,19 +101,21 @@ Recent focus:
    Japanese. Use failures to decide whether OPUS-MT remains acceptable or
    whether the M2M100 bakeoff should move toward runtime integration.
 
-3. Setup/readiness checklist.
+3. Setup/readiness hardening.
 
-   Add a first-run or settings status surface that clearly shows whether Screen
-   & System Audio permission, local Whisper model files, OPUS-MT runtime, Thai
-   model, Japanese model, local-only mode, and latest reliability report status
-   are ready before a meeting starts.
+   Turn the current Settings readiness rows and `Check Readiness` action into a
+   first-run-quality setup experience. Clearly show whether Screen & System
+   Audio permission, local Whisper model files, OPUS-MT runtime, Thai model,
+   Japanese model, local-only mode, and latest reliability report status are
+   ready before a meeting starts. Keep this out of the default live subtitle
+   surface unless a blocking issue needs user action.
 
 4. Subtitle overlay polish.
 
    Make the overlay feel like the daily product surface: always-on-top behavior,
    sensible window placement, readable compact layout, and a path toward
-   click-through behavior where macOS allows it. Keep developer debug metrics
-   out of the default user-facing overlay.
+   click-through behavior where macOS allows it. Keep developer debug metrics,
+   readiness grids, and transcript memory out of the default user-facing overlay.
 
 5. Defer transcript persistence and diarization.
 

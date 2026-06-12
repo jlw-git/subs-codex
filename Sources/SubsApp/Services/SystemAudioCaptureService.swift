@@ -12,24 +12,34 @@ private let audioCaptureLogger = Logger(
 final class SystemAudioCaptureService: NSObject, ObservableObject {
     @Published private(set) var state: CaptureState = .idle
     @Published private(set) var audioPulse: Double = 0
+    @Published private(set) var hasReceivedAudioInput = false
+    @Published private(set) var hasReceivedSoundInput = false
 
     var onAudioBuffer: ((AVAudioPCMBuffer) -> Void)?
     var onFirstAudioBuffer: (() -> Void)?
 
+    var isReceivingSoundInput: Bool {
+        audioPulse >= soundInputThreshold
+    }
+
     private var stream: SCStream?
     private var receivedBufferCount = 0
+    private let soundInputThreshold = 0.02
 
     func start() async {
         guard stream == nil else { return }
         state = .requestingPermission
         receivedBufferCount = 0
+        audioPulse = 0
+        hasReceivedAudioInput = false
+        hasReceivedSoundInput = false
 
         do {
             audioCaptureLogger.info("Requesting shareable content for system audio capture")
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             guard let display = content.displays.first else {
                 audioCaptureLogger.error("No display is available for system audio capture")
-                state = .failed("No display is available for local system-audio capture.")
+                state = .failed("No display is available for system audio.")
                 return
             }
 
@@ -59,6 +69,8 @@ final class SystemAudioCaptureService: NSObject, ObservableObject {
         }
         stream = nil
         audioPulse = 0
+        hasReceivedAudioInput = false
+        hasReceivedSoundInput = false
         receivedBufferCount = 0
         state = .idle
     }
@@ -66,10 +78,14 @@ final class SystemAudioCaptureService: NSObject, ObservableObject {
     private func receiveAudioBuffer(_ buffer: AVAudioPCMBuffer) {
         receivedBufferCount += 1
         let level = buffer.rmsLevel
-        audioPulse = level
+        audioPulse = Self.meterLevel(forRMS: level)
+        hasReceivedAudioInput = true
+        if audioPulse >= soundInputThreshold {
+            hasReceivedSoundInput = true
+        }
         if receivedBufferCount == 1 || receivedBufferCount.isMultiple(of: 100) {
             audioCaptureLogger.info(
-                "Received system audio buffer \(self.receivedBufferCount, privacy: .public), frames: \(buffer.frameLength, privacy: .public), sample rate: \(buffer.format.sampleRate, privacy: .public), rms: \(level, privacy: .public)"
+                "Received system audio buffer \(self.receivedBufferCount, privacy: .public), frames: \(buffer.frameLength, privacy: .public), sample rate: \(buffer.format.sampleRate, privacy: .public), rms: \(level, privacy: .public), meter: \(self.audioPulse, privacy: .public)"
             )
         }
         if receivedBufferCount == 1 {
@@ -79,7 +95,13 @@ final class SystemAudioCaptureService: NSObject, ObservableObject {
     }
 
     private static func permissionMessage(for error: Error) -> String {
-        "Screen & System Audio Recording permission is required. Open System Settings > Privacy & Security > Screen & System Audio Recording, allow Subs, then restart capture. Error: \(error.localizedDescription)"
+        "Allow Screen & System Audio Recording in System Settings, then reopen Subs. Subs does not use the microphone."
+    }
+
+    private static func meterLevel(forRMS rms: Double) -> Double {
+        guard rms > 0 else { return 0 }
+        let decibels = 20 * log10(rms)
+        return min(1, max(0, (decibels + 90) / 45))
     }
 }
 
@@ -170,10 +192,50 @@ private extension CMSampleBuffer {
 
 private extension AVAudioPCMBuffer {
     var rmsLevel: Double {
-        guard frameLength > 0, let channelData = floatChannelData else { return 0 }
+        guard frameLength > 0 else { return 0 }
 
-        let channelCount = Int(format.channelCount)
-        let frameCount = Int(frameLength)
+        if let channelData = floatChannelData, !format.isInterleaved {
+            return Self.rmsLevel(channelData: channelData, channelCount: Int(format.channelCount), frameCount: Int(frameLength))
+        }
+
+        return convertedMonoFloatRMSLevel()
+    }
+
+    private func convertedMonoFloatRMSLevel() -> Double {
+        guard let targetFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: format.sampleRate,
+            channels: 1,
+            interleaved: false
+        ),
+        let convertedBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: frameLength),
+        let converter = AVAudioConverter(from: format, to: targetFormat) else {
+            return 0
+        }
+
+        var didProvideInput = false
+        var conversionError: NSError?
+        let status = converter.convert(to: convertedBuffer, error: &conversionError) { _, outStatus in
+            if didProvideInput {
+                outStatus.pointee = .noDataNow
+                return nil
+            }
+
+            didProvideInput = true
+            outStatus.pointee = .haveData
+            return self
+        }
+
+        guard status != .error,
+              conversionError == nil,
+              let channelData = convertedBuffer.floatChannelData else {
+            return 0
+        }
+
+        return Self.rmsLevel(channelData: channelData, channelCount: 1, frameCount: Int(convertedBuffer.frameLength))
+    }
+
+    private static func rmsLevel(channelData: UnsafePointer<UnsafeMutablePointer<Float>>, channelCount: Int, frameCount: Int) -> Double {
         var sumSquares: Double = 0
         var sampleCount = 0
 

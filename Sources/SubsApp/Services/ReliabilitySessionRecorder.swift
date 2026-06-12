@@ -32,6 +32,8 @@ struct ReliabilityStartupTimings: Codable, Equatable {
     var firstCandidateSubtitleMs: Int?
     var firstAcceptedSubtitleMs: Int?
     var firstTranslatedSubtitleMs: Int?
+    var firstTranslatedDraftSubtitleMs: Int?
+    var firstTranslatedCorrectedSubtitleMs: Int?
 }
 
 struct ReliabilityRecognitionMetrics: Codable, Equatable {
@@ -126,7 +128,7 @@ struct ReliabilityFailureRecord: Codable, Equatable {
 
 @MainActor
 final class ReliabilitySessionRecorder: ObservableObject {
-    nonisolated static let schemaVersion = 1
+    nonisolated static let schemaVersion = 2
 
     @Published private(set) var latestReport: ReliabilitySessionReport?
     @Published private(set) var latestReportFileURLs: ReliabilityReportFileURLs?
@@ -216,10 +218,16 @@ final class ReliabilitySessionRecorder: ObservableObject {
         activeSession?.translation.recordAttempt()
     }
 
-    func recordTranslationSuccess(latencyMs: Int) {
+    func recordTranslationSuccess(latencyMs: Int, kind: SpeechRecognitionResultKind) {
         let elapsed = elapsedMs()
         activeSession?.translation.recordSuccess(latencyMs: latencyMs)
         activeSession?.setFirstTiming(\.firstTranslatedSubtitleMs, elapsed)
+        switch kind {
+        case .candidate:
+            activeSession?.setFirstTiming(\.firstTranslatedDraftSubtitleMs, elapsed)
+        case .accepted:
+            activeSession?.setFirstTiming(\.firstTranslatedCorrectedSubtitleMs, elapsed)
+        }
     }
 
     func recordTranslationFailure(latencyMs: Int, message: String) {
@@ -293,33 +301,35 @@ final class ReliabilitySessionRecorder: ObservableObject {
         - Started: \(Self.displayDateFormatter.string(from: report.startedAt))
         - Ended: \(Self.displayDateFormatter.string(from: report.endedAt))
         - Stop reason: \(report.stopReason)
-        - Language: \(report.sourceLanguage) -> \(report.targetLanguage)
-        - ASR backend: \(report.asrBackend)
-        - Translation backend: \(report.translationBackend)
+        - Language: \(report.sourceLanguage) to \(report.targetLanguage)
+        - Speech model: \(report.asrBackend)
+        - Translation: \(report.translationBackend)
 
-        ## Startup Timings
+        ## Startup
 
         | Event | Milliseconds |
         | --- | ---: |
-        | ASR ready | \(Self.display(timings.asrReadyMs)) |
+        | Speech ready | \(Self.display(timings.asrReadyMs)) |
         | Capture running | \(Self.display(timings.captureRunningMs)) |
-        | First audio buffer | \(Self.display(timings.firstAudioBufferMs)) |
-        | Translation warmup ready | \(Self.display(timings.translationWarmupReadyMs)) |
-        | Translation warmup failed | \(Self.display(timings.translationWarmupFailedMs)) |
-        | First candidate subtitle | \(Self.display(timings.firstCandidateSubtitleMs)) |
-        | First accepted subtitle | \(Self.display(timings.firstAcceptedSubtitleMs)) |
-        | First translated subtitle | \(Self.display(timings.firstTranslatedSubtitleMs)) |
+        | First audio | \(Self.display(timings.firstAudioBufferMs)) |
+        | Translation ready | \(Self.display(timings.translationWarmupReadyMs)) |
+        | Translation failed | \(Self.display(timings.translationWarmupFailedMs)) |
+        | First draft | \(Self.display(timings.firstCandidateSubtitleMs)) |
+        | First accepted | \(Self.display(timings.firstAcceptedSubtitleMs)) |
+        | First English | \(Self.display(timings.firstTranslatedSubtitleMs)) |
+        | First English draft | \(Self.display(timings.firstTranslatedDraftSubtitleMs)) |
+        | First accepted English | \(Self.display(timings.firstTranslatedCorrectedSubtitleMs)) |
 
-        ## Recognition Counters
+        ## Speech Counts
 
         - Latest RMS: \(String(format: "%.4f", report.recognition.latestRMS))
         - Skipped quiet chunks: \(report.recognition.skippedQuietChunks)
         - Low-confidence chunks: \(report.recognition.filteredLowConfidenceChunks)
         - Duplicate chunks: \(report.recognition.filteredDuplicateChunks)
-        - Candidate chunks: \(report.recognition.candidateChunks)
+        - Draft chunks: \(report.recognition.candidateChunks)
         - Accepted chunks: \(report.recognition.acceptedChunks)
 
-        ## Translation Metrics
+        ## Translation
 
         - Attempts: \(translation.attempts)
         - Successes: \(translation.successes)
